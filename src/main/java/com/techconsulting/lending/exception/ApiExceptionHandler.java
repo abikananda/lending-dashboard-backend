@@ -1,0 +1,2 @@
+package com.techconsulting.lending.exception; import org.springframework.http.*; import org.springframework.web.bind.annotation.*; import java.time.Instant; import java.util.Map;
+@RestControllerAdvice public class ApiExceptionHandler { @ExceptionHandler({IllegalArgumentException.class,NoSuchElementException.class}) ResponseEntity<?> bad(RuntimeException e){return ResponseEntity.badRequest().body(Map.of("timestamp",Instant.now(),"status",400,"errorCode","BAD_REQUEST","message",e.getMessage()==null?"Request failed":e.getMessage()));} }
