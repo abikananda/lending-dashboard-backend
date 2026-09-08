@@ -1,0 +1,2 @@
+package com.techconsulting.lending.repository; import com.techconsulting.lending.domain.ImportBatch; import org.springframework.data.jpa.repository.JpaRepository; import java.util.*;
+public interface ImportBatchRepository extends JpaRepository<ImportBatch,Long> { Optional<ImportBatch> findByUserIdAndReportTypeAndFileChecksum(Long userId,ImportBatch.ReportType type,String checksum); List<ImportBatch> findByUserIdOrderByCreatedAtDesc(Long userId); }
