@@ -34,6 +34,7 @@ public class LoanExcelImportService {
     private final LoanReportStagingRepository staging;
     private final ManualLendingRepository loans;
     private final LoanCalculationService calculations;
+    private final BorrowerNameResolver borrowerNames;
     private final ObjectMapper json;
 
     @Transactional
@@ -94,6 +95,7 @@ public class LoanExcelImportService {
 
     private void processValidRow(Long userId, ImportBatch batch, LoanReportStaging staged) {
         try {
+            if (staged.getBorrowerName() == null) borrowerNames.resolve(staged.getLoanId()).ifPresent(staged::setBorrowerName);
             var existing = loans.findByUserIdAndSchemeIdIgnoreCase(userId, staged.getSchemeId());
             loans.save(calculations.calculate(userId, batch.getId(), staged,
                     existing.orElseGet(ManualLending::new)));
