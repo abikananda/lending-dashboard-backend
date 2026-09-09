@@ -28,13 +28,14 @@ class LoanExcelImportServiceTest {
         LoanReportStagingRepository staging = mock(LoanReportStagingRepository.class);
         ManualLendingRepository loans = mock(ManualLendingRepository.class);
         LoanCalculationService calculations = mock(LoanCalculationService.class);
+        BorrowerNameResolver borrowerNames = mock(BorrowerNameResolver.class);
         when(batches.findByUserIdAndReportTypeAndFileChecksum(any(), any(), any())).thenReturn(Optional.empty());
         when(batches.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(loans.findByUserIdAndSchemeIdIgnoreCase(7L, "LOA-KLBUNNZP")).thenReturn(Optional.empty());
         when(calculations.calculate(any(), any(), any(), any())).thenReturn(new ManualLending());
 
         LoanExcelImportService service = new LoanExcelImportService(
-                batches, staging, loans, calculations, new ObjectMapper());
+                batches, staging, loans, calculations, borrowerNames, new ObjectMapper());
         ImportBatch result = service.upload(7L, new MockMultipartFile(
                 "file", "manual-lending.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", reportBytes()));
