@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.techconsulting.lending.domain.ImportBatch;
 import com.techconsulting.lending.domain.LoanReportStaging;
 import com.techconsulting.lending.domain.ManualLending;
+import com.techconsulting.lending.domain.User;
 import com.techconsulting.lending.repository.ImportBatchRepository;
 import com.techconsulting.lending.repository.LoanReportStagingRepository;
 import com.techconsulting.lending.repository.ManualLendingRepository;
+import com.techconsulting.lending.repository.UserRepository;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,15 +31,19 @@ class LoanExcelImportServiceTest {
         ManualLendingRepository loans = mock(ManualLendingRepository.class);
         LoanCalculationService calculations = mock(LoanCalculationService.class);
         BorrowerNameResolver borrowerNames = mock(BorrowerNameResolver.class);
+        UserRepository users = mock(UserRepository.class);
+        User user = new User();
+        user.setLenderId("IAKI7TL1UT6K");
+        when(users.findById(7L)).thenReturn(Optional.of(user));
         when(batches.findByUserIdAndReportTypeAndFileChecksum(any(), any(), any())).thenReturn(Optional.empty());
         when(batches.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(loans.findByUserIdAndSchemeIdIgnoreCase(7L, "LOA-KLBUNNZP")).thenReturn(Optional.empty());
         when(calculations.calculate(any(), any(), any(), any())).thenReturn(new ManualLending());
 
         LoanExcelImportService service = new LoanExcelImportService(
-                batches, staging, loans, calculations, borrowerNames, new ObjectMapper());
+                batches, staging, loans, calculations, borrowerNames, users, new ObjectMapper());
         ImportBatch result = service.upload(7L, new MockMultipartFile(
-                "file", "manual-lending.xlsx",
+                "file", "MANUAL_LENDING_REPORT_IAKI7TL1UT6K_17882911422250.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", reportBytes()));
 
         ArgumentCaptor<LoanReportStaging> captor = ArgumentCaptor.forClass(LoanReportStaging.class);
@@ -59,6 +65,27 @@ class LoanExcelImportServiceTest {
         assertThat(result.getStatus()).isEqualTo(ImportBatch.Status.COMPLETED);
         assertThat(result.getTotalRows()).isOne();
         assertThat(result.getInsertedRows()).isOne();
+    }
+
+    @Test
+    void rejectsReportOwnedByAnotherLenderBeforeCreatingBatch() throws Exception {
+        ImportBatchRepository batches = mock(ImportBatchRepository.class);
+        UserRepository users = mock(UserRepository.class);
+        User user = new User();
+        user.setLenderId("IAKI7TL1UT6K");
+        when(users.findById(7L)).thenReturn(Optional.of(user));
+        LoanExcelImportService service = new LoanExcelImportService(
+                batches, mock(LoanReportStagingRepository.class), mock(ManualLendingRepository.class),
+                mock(LoanCalculationService.class), mock(BorrowerNameResolver.class), users,
+                new ObjectMapper());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.upload(7L,
+                        new MockMultipartFile("file", "MANUAL_LENDING_REPORT_OTHER_17882911422250.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                reportBytes())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not belong to the logged-in lender");
+        verifyNoInteractions(batches);
     }
 
     private byte[] reportBytes() throws Exception {
