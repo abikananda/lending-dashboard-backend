@@ -16,4 +16,6 @@ app:
   jwt-expiration: PT8H
   cors-origins: ${CORS_ORIGINS:http://localhost:4200}
   npa-on-dpd-over-seven: false
+  # Optional, for example http://localhost:8081/api/borrowers/{loanId}
+  borrower-lookup-url: ${BORROWER_LOOKUP_URL:}
 springdoc.swagger-ui.path: /swagger-ui.html
