@@ -132,6 +132,8 @@ public class LoanExcelImportService {
         staged.setTenure(decimal(get(raw, "tenure", "tenuremonths")));
         staged.setInvestedAmount(decimal(get(raw, "disbursedamount", "investedamount", "investmentamount")));
         staged.setAmountReceived(decimal(get(raw, "totalamountreceived", "amountreceived")));
+        staged.setReportedPrincipalReceived(optionalDecimal(get(raw, "principalreceived")));
+        staged.setReportedInterestReceived(optionalDecimal(get(raw, "interestreceived")));
         staged.setInvestmentDate(date(get(raw, "disbursementdate", "investmentdate")));
         staged.setLoanStatus(get(raw, "loanstatus", "status"));
         staged.setDpd(integer(get(raw, "dpddayspastdue", "dpd")));
@@ -168,6 +170,7 @@ public class LoanExcelImportService {
         return new BigDecimal(value.replaceAll("[₹,%\\s]", "").replace(",", ""));
     }
     private Integer integer(String value) { return decimal(value).intValue(); }
+    private BigDecimal optionalDecimal(String value) { return value == null || value.isBlank() ? null : decimal(value); }
     private LocalDate date(String value) {
         if (value == null || value.isBlank()) return null;
         for (DateTimeFormatter format : DATE_FORMATS) try { return LocalDate.parse(value, format); }
