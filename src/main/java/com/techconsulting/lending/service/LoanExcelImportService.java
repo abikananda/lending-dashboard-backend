@@ -1,8 +1,187 @@
 package com.techconsulting.lending.service;
-import com.fasterxml.jackson.databind.ObjectMapper; import com.techconsulting.lending.domain.*; import com.techconsulting.lending.repository.*; import lombok.RequiredArgsConstructor; import org.apache.poi.ss.usermodel.*; import org.apache.poi.xssf.usermodel.XSSFWorkbook; import org.springframework.dao.DataIntegrityViolationException; import org.springframework.stereotype.Service; import org.springframework.transaction.annotation.Transactional; import org.springframework.web.multipart.MultipartFile; import java.io.*; import java.math.*; import java.nio.charset.StandardCharsets; import java.security.*; import java.time.*; import java.time.format.DateTimeFormatter; import java.util.*;
-@Service @RequiredArgsConstructor
-public class LoanExcelImportService { private final ImportBatchRepository batches; private final LoanReportStagingRepository staging; private final ManualLendingRepository loans; private final LoanCalculationService calculations; private final ObjectMapper json;
- @Transactional public ImportBatch upload(Long userId,MultipartFile file) throws Exception { if(file==null||file.isEmpty()||!Objects.requireNonNull(file.getOriginalFilename()).toLowerCase().endsWith(".xlsx")) throw new IllegalArgumentException("A non-empty .xlsx file is required"); byte[] bytes=file.getBytes(); String sum=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); var old=batches.findByUserIdAndReportTypeAndFileChecksum(userId,ImportBatch.ReportType.LOAN_REPORT,sum); if(old.isPresent()) return old.get(); ImportBatch b=new ImportBatch();b.setUserId(userId);b.setReportType(ImportBatch.ReportType.LOAN_REPORT);b.setOriginalFileName(file.getOriginalFilename());b.setFileChecksum(sum);b.setFileSize(bytes.length);b.setStatus(ImportBatch.Status.PROCESSING);b.setStartedAt(Instant.now());b=batches.save(b); parseAndProcess(userId,b,bytes); return batches.save(b); }
- private void parseAndProcess(Long userId,ImportBatch b,byte[] bytes) throws Exception { try(Workbook wb=new XSSFWorkbook(new ByteArrayInputStream(bytes))){Sheet sh=wb.getSheetAt(0);if(sh.getPhysicalNumberOfRows()<2)throw new IllegalArgumentException("Report has no data rows");Map<String,Integer> h=headers(sh.getRow(sh.getFirstRowNum())); require(h,"schemeid","investedamount","tenure","amountreceived","investmentdate","loanstatus"); for(int i=sh.getFirstRowNum()+1;i<=sh.getLastRowNum();i++){Row r=sh.getRow(i);if(r==null)continue;b.setTotalRows(b.getTotalRows()+1);LoanReportStaging s=new LoanReportStaging();s.setImportBatchId(b.getId());s.setRowNumber(i+1);Map<String,String> raw=new LinkedHashMap<>();h.forEach((k,v)->raw.put(k,text(r.getCell(v))));s.setRawRowJson(json.writeValueAsString(raw));s.setSchemeId(get(raw,"schemeid","schemeidentifier"));s.setLoanId(get(raw,"loanid"));s.setBorrowerName(get(raw,"borrowername","name"));s.setTenure(decimal(get(raw,"tenure")));s.setInvestedAmount(decimal(get(raw,"investedamount","investmentamount")));s.setAmountReceived(decimal(get(raw,"amountreceived")));s.setInvestmentDate(date(get(raw,"investmentdate")));s.setLoanStatus(get(raw,"loanstatus","status"));s.setDpd(integer(get(raw,"dpd")));List<String> errors=validate(s);s.setValidationStatus(errors.isEmpty()?"VALID":"INVALID");s.setValidationErrors(String.join("; ",errors));s.setProcessingStatus(errors.isEmpty()?"PENDING":"SKIPPED");staging.save(s);if(!errors.isEmpty()){b.setInvalidRows(b.getInvalidRows()+1);continue;}b.setValidRows(b.getValidRows()+1);try{var existing=loans.findByUserIdAndSchemeIdIgnoreCase(userId,s.getSchemeId());loans.save(calculations.calculate(userId,b.getId(),s,existing.orElseGet(ManualLending::new)));s.setProcessingStatus("PROCESSED");s.setProcessedAt(Instant.now());staging.save(s);if(existing.isPresent())b.setUpdatedRows(b.getUpdatedRows()+1);else b.setInsertedRows(b.getInsertedRows()+1);}catch(Exception e){s.setProcessingStatus("FAILED");s.setValidationErrors(e.getMessage());staging.save(s);b.setFailedRows(b.getFailedRows()+1);}}b.setStatus(b.getFailedRows()>0||b.getInvalidRows()>0?ImportBatch.Status.PARTIALLY_COMPLETED:ImportBatch.Status.COMPLETED);b.setCompletedAt(Instant.now());}catch(Exception e){b.setStatus(ImportBatch.Status.FAILED);b.setErrorMessage(e.getMessage());b.setCompletedAt(Instant.now());throw e;}}
- private Map<String,Integer> headers(Row r){Map<String,Integer> m=new LinkedHashMap<>();for(Cell c:r)m.put(norm(text(c)),c.getColumnIndex());return m;} private void require(Map<String,Integer> h,String...x){for(String k:x)if(!h.containsKey(k))throw new IllegalArgumentException("Missing required header: "+k);} private String norm(String s){return s.toLowerCase().replaceAll("[^a-z0-9]","");} private String get(Map<String,String> m,String...k){for(String x:k)if(m.get(x)!=null&&!m.get(x).isBlank())return m.get(x).trim();return null;} private String text(Cell c){if(c==null)return "";return new DataFormatter(Locale.ENGLISH).formatCellValue(c).trim();} private BigDecimal decimal(String s){if(s==null||s.isBlank()||"-".equals(s))return BigDecimal.ZERO;return new BigDecimal(s.replaceAll("[₹,% ]","").replace(",",""));} private Integer integer(String s){return decimal(s).intValue();} private LocalDate date(String s){if(s==null)return null;for(String p:List.of("dd/MM/yyyy","yyyy-MM-dd","dd-MM-yyyy"))try{return LocalDate.parse(s,DateTimeFormatter.ofPattern(p));}catch(Exception ignored){}return null;} private List<String> validate(LoanReportStaging s){List<String> e=new ArrayList<>();if(s.getSchemeId()==null)e.add("Scheme ID is required");if(s.getInvestedAmount().signum()<=0)e.add("Invested amount must be positive");if(s.getTenure().signum()<=0)e.add("Tenure must be positive");if(s.getInvestmentDate()==null)e.add("Invalid investment date");if(s.getLoanStatus()==null)e.add("Loan status is required");return e;}
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.techconsulting.lending.domain.ImportBatch;
+import com.techconsulting.lending.domain.LoanReportStaging;
+import com.techconsulting.lending.domain.ManualLending;
+import com.techconsulting.lending.repository.ImportBatchRepository;
+import com.techconsulting.lending.repository.LoanReportStagingRepository;
+import com.techconsulting.lending.repository.ManualLendingRepository;
+import lombok.RequiredArgsConstructor;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.ByteArrayInputStream;
+import java.math.BigDecimal;
+import java.security.MessageDigest;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+
+@Service
+@RequiredArgsConstructor
+public class LoanExcelImportService {
+    private static final int HEADER_SCAN_LIMIT = 100;
+    private static final List<DateTimeFormatter> DATE_FORMATS = List.of(
+            DateTimeFormatter.ofPattern("dd/MM/yyyy"), DateTimeFormatter.ISO_LOCAL_DATE,
+            DateTimeFormatter.ofPattern("dd-MM-yyyy"));
+
+    private final ImportBatchRepository batches;
+    private final LoanReportStagingRepository staging;
+    private final ManualLendingRepository loans;
+    private final LoanCalculationService calculations;
+    private final ObjectMapper json;
+
+    @Transactional
+    public ImportBatch upload(Long userId, MultipartFile file) throws Exception {
+        String filename = file == null ? "" : Objects.requireNonNullElse(file.getOriginalFilename(), "");
+        if (file == null || file.isEmpty() || !filename.toLowerCase(Locale.ROOT).endsWith(".xlsx"))
+            throw new IllegalArgumentException("A non-empty .xlsx file is required");
+        byte[] bytes = file.getBytes();
+        String sum = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        var old = batches.findByUserIdAndReportTypeAndFileChecksum(userId, ImportBatch.ReportType.LOAN_REPORT, sum);
+        if (old.isPresent()) return old.get();
+        ImportBatch batch = new ImportBatch();
+        batch.setUserId(userId); batch.setReportType(ImportBatch.ReportType.LOAN_REPORT);
+        batch.setOriginalFileName(filename); batch.setFileChecksum(sum); batch.setFileSize(bytes.length);
+        batch.setStatus(ImportBatch.Status.PROCESSING); batch.setStartedAt(Instant.now());
+        batch = batches.save(batch);
+        parseAndProcess(userId, batch, bytes);
+        return batches.save(batch);
+    }
+
+    private void parseAndProcess(Long userId, ImportBatch batch, byte[] bytes) throws Exception {
+        try (Workbook workbook = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Table table = findLoanTable(workbook);
+            Sheet sheet = table.sheet();
+            for (int i = table.headerRowIndex() + 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null || isBlank(row, table.headers())) continue;
+                batch.setTotalRows(batch.getTotalRows() + 1);
+                LoanReportStaging staged = new LoanReportStaging();
+                staged.setImportBatchId(batch.getId()); staged.setRowNumber(i + 1);
+                Map<String, String> raw = rawRow(row, table.headers());
+                staged.setRawRowJson(json.writeValueAsString(raw));
+                try {
+                    map(raw, staged);
+                    List<String> errors = validate(staged);
+                    staged.setValidationStatus(errors.isEmpty() ? "VALID" : "INVALID");
+                    staged.setValidationErrors(String.join("; ", errors));
+                    staged.setProcessingStatus(errors.isEmpty() ? "PENDING" : "SKIPPED");
+                    staging.save(staged);
+                    if (!errors.isEmpty()) { batch.setInvalidRows(batch.getInvalidRows() + 1); continue; }
+                    batch.setValidRows(batch.getValidRows() + 1);
+                    processValidRow(userId, batch, staged);
+                } catch (RuntimeException ex) {
+                    staged.setValidationStatus("INVALID");
+                    staged.setValidationErrors("Unable to parse row: " + ex.getMessage());
+                    staged.setProcessingStatus("SKIPPED"); staging.save(staged);
+                    batch.setInvalidRows(batch.getInvalidRows() + 1);
+                }
+            }
+            batch.setStatus(batch.getFailedRows() > 0 || batch.getInvalidRows() > 0
+                    ? ImportBatch.Status.PARTIALLY_COMPLETED : ImportBatch.Status.COMPLETED);
+            batch.setCompletedAt(Instant.now());
+        } catch (Exception ex) {
+            batch.setStatus(ImportBatch.Status.FAILED); batch.setErrorMessage(ex.getMessage());
+            batch.setCompletedAt(Instant.now()); throw ex;
+        }
+    }
+
+    private void processValidRow(Long userId, ImportBatch batch, LoanReportStaging staged) {
+        try {
+            var existing = loans.findByUserIdAndSchemeIdIgnoreCase(userId, staged.getSchemeId());
+            loans.save(calculations.calculate(userId, batch.getId(), staged,
+                    existing.orElseGet(ManualLending::new)));
+            staged.setProcessingStatus("PROCESSED"); staged.setProcessedAt(Instant.now()); staging.save(staged);
+            if (existing.isPresent()) batch.setUpdatedRows(batch.getUpdatedRows() + 1);
+            else batch.setInsertedRows(batch.getInsertedRows() + 1);
+        } catch (Exception ex) {
+            staged.setProcessingStatus("FAILED"); staged.setValidationErrors(ex.getMessage()); staging.save(staged);
+            batch.setFailedRows(batch.getFailedRows() + 1);
+        }
+    }
+
+    private Table findLoanTable(Workbook workbook) {
+        for (Sheet sheet : workbook) {
+            int last = Math.min(sheet.getLastRowNum(), sheet.getFirstRowNum() + HEADER_SCAN_LIMIT);
+            for (int i = sheet.getFirstRowNum(); i <= last; i++) {
+                Row row = sheet.getRow(i); if (row == null) continue;
+                Map<String, Integer> headers = headers(row);
+                if (hasAny(headers, "loanid", "schemeid", "schemeidentifier")
+                        && hasAny(headers, "disbursedamount", "investedamount", "investmentamount")
+                        && hasAny(headers, "tenure", "tenuremonths")
+                        && hasAny(headers, "totalamountreceived", "amountreceived")
+                        && hasAny(headers, "disbursementdate", "investmentdate")
+                        && hasAny(headers, "loanstatus", "status")) return new Table(sheet, i, headers);
+            }
+        }
+        throw new IllegalArgumentException("Could not find the manual-lending table. Expected Loan ID, "
+                + "Disbursed Amount, Tenure, Total Amount Received, Disbursement Date and Loan Status columns.");
+    }
+
+    private void map(Map<String, String> raw, LoanReportStaging staged) {
+        String loanId = get(raw, "loanid"), schemeId = get(raw, "schemeid", "schemeidentifier");
+        // Order ID is shared by multiple loans. Loan ID is the stable row-level identifier.
+        staged.setSchemeId(firstNonBlank(schemeId, loanId)); staged.setLoanId(firstNonBlank(loanId, schemeId));
+        staged.setBorrowerName(get(raw, "borrowername", "name"));
+        staged.setTenure(decimal(get(raw, "tenure", "tenuremonths")));
+        staged.setInvestedAmount(decimal(get(raw, "disbursedamount", "investedamount", "investmentamount")));
+        staged.setAmountReceived(decimal(get(raw, "totalamountreceived", "amountreceived")));
+        staged.setInvestmentDate(date(get(raw, "disbursementdate", "investmentdate")));
+        staged.setLoanStatus(get(raw, "loanstatus", "status"));
+        staged.setDpd(integer(get(raw, "dpddayspastdue", "dpd")));
+        staged.setLoanType(get(raw, "repaymenttype", "loantype")); staged.setTenureType("MONTHS");
+        staged.setSource("LENDENCLUB_MANUAL_LENDING_REPORT");
+    }
+
+    private Map<String, Integer> headers(Row row) {
+        Map<String, Integer> result = new LinkedHashMap<>();
+        for (Cell cell : row) { String key = normalize(text(cell)); if (!key.isBlank()) result.put(key, cell.getColumnIndex()); }
+        return result;
+    }
+    private Map<String, String> rawRow(Row row, Map<String, Integer> headers) {
+        Map<String, String> raw = new LinkedHashMap<>();
+        headers.forEach((key, column) -> raw.put(key, text(row.getCell(column)))); return raw;
+    }
+    private boolean isBlank(Row row, Map<String, Integer> headers) {
+        return headers.values().stream().allMatch(column -> text(row.getCell(column)).isBlank());
+    }
+    private boolean hasAny(Map<String, Integer> headers, String... aliases) {
+        return Arrays.stream(aliases).anyMatch(headers::containsKey);
+    }
+    private String normalize(String value) { return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", ""); }
+    private String get(Map<String, String> values, String... aliases) {
+        for (String alias : aliases) { String value = values.get(alias); if (value != null && !value.isBlank()) return value.trim(); }
+        return null;
+    }
+    private String firstNonBlank(String... values) {
+        for (String value : values) if (value != null && !value.isBlank()) return value; return null;
+    }
+    private String text(Cell cell) { return cell == null ? "" : new DataFormatter(Locale.ENGLISH).formatCellValue(cell).trim(); }
+    private BigDecimal decimal(String value) {
+        if (value == null || value.isBlank() || "-".equals(value)) return BigDecimal.ZERO;
+        return new BigDecimal(value.replaceAll("[₹,%\\s]", "").replace(",", ""));
+    }
+    private Integer integer(String value) { return decimal(value).intValue(); }
+    private LocalDate date(String value) {
+        if (value == null || value.isBlank()) return null;
+        for (DateTimeFormatter format : DATE_FORMATS) try { return LocalDate.parse(value, format); }
+        catch (RuntimeException ignored) { }
+        return null;
+    }
+    private List<String> validate(LoanReportStaging staged) {
+        List<String> errors = new ArrayList<>();
+        if (staged.getSchemeId() == null) errors.add("Loan or Scheme ID is required");
+        if (staged.getInvestedAmount().signum() <= 0) errors.add("Disbursed amount must be positive");
+        if (staged.getTenure().signum() <= 0) errors.add("Tenure must be positive");
+        if (staged.getInvestmentDate() == null) errors.add("Invalid disbursement date");
+        if (staged.getLoanStatus() == null) errors.add("Loan status is required");
+        return errors;
+    }
+    private record Table(Sheet sheet, int headerRowIndex, Map<String, Integer> headers) { }
 }
