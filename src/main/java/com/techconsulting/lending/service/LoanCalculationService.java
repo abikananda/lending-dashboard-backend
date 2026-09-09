@@ -1,9 +1,9 @@
 package com.techconsulting.lending.service;
-import com.techconsulting.lending.domain.*; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Service; import java.math.*; import java.time.*;
+import com.techconsulting.lending.domain.*; import org.springframework.beans.factory.annotation.Autowired; import org.springframework.beans.factory.annotation.Value; import org.springframework.stereotype.Service; import java.math.*; import java.time.*;
 @Service
 public class LoanCalculationService {
  private static final BigDecimal ZERO=BigDecimal.ZERO.setScale(2); private final Clock clock; private final boolean npaOnDpd;
- public LoanCalculationService(@Value("${app.npa-on-dpd-over-seven:false}") boolean npaOnDpd){this(Clock.systemUTC(),npaOnDpd);} LoanCalculationService(Clock c,boolean d){clock=c;npaOnDpd=d;}
+ @Autowired public LoanCalculationService(@Value("${app.npa-on-dpd-over-seven:false}") boolean npaOnDpd){this(Clock.systemUTC(),npaOnDpd);} LoanCalculationService(Clock c,boolean d){clock=c;npaOnDpd=d;}
  public ManualLending calculate(Long userId,Long batchId,LoanReportStaging row,ManualLending target){
   BigDecimal invested=money(row.getInvestedAmount()), received=money(row.getAmountReceived()); int tenure=row.getTenure().intValueExact(); if(invested.signum()<=0||tenure<=0||received.signum()<0) throw new IllegalArgumentException("Invested amount and tenure must be positive; received amount cannot be negative");
   BigDecimal emi=invested.divide(BigDecimal.valueOf(tenure),2,RoundingMode.HALF_UP); BigDecimal completed=received.divideToIntegralValue(emi); BigDecimal principal=completed.multiply(emi).min(invested).setScale(2,RoundingMode.HALF_UP); BigDecimal interest=received.subtract(principal).setScale(2,RoundingMode.HALF_UP); BigDecimal outstanding=invested.subtract(principal).max(ZERO); boolean closed="CLOSED".equalsIgnoreCase(row.getLoanStatus()); BigDecimal ret=closed?received.subtract(invested):interest; BigDecimal retPct=ret.multiply(BigDecimal.valueOf(100)).divide(invested,4,RoundingMode.HALF_UP);
