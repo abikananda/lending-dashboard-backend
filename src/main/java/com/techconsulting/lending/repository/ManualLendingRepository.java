@@ -3,5 +3,6 @@ public interface ManualLendingRepository extends JpaRepository<ManualLending,Lon
  @Query("select count(m) from ManualLending m where m.userId=:u and m.loanStatus=:s") long countStatus(@Param("u") Long userId,@Param("s") String status);
  @Query("select coalesce(sum(m.investedAmount),0) from ManualLending m where m.userId=:u") BigDecimal totalInvested(@Param("u") Long userId);
  @Query("select coalesce(sum(m.amountReceived),0) from ManualLending m where m.userId=:u") BigDecimal totalReceived(@Param("u") Long userId);
+ @Query("select coalesce(sum(m.calculatedInterestReceived),0) from ManualLending m where m.userId=:u") BigDecimal totalInterestEarned(@Param("u") Long userId);
  @Query("select coalesce(sum(m.outstandingPrincipal),0) from ManualLending m where m.userId=:u") BigDecimal totalOutstanding(@Param("u") Long userId);
  @Query("select count(m) from ManualLending m where m.userId=:u and m.npa=true") long countNpa(@Param("u") Long userId); }
