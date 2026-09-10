@@ -56,6 +56,7 @@ class LoanExcelImportServiceTest {
         assertThat(row.getAmountReceived()).isEqualByComparingTo("135.55");
         assertThat(row.getReportedPrincipalReceived()).isEqualByComparingTo("125");
         assertThat(row.getReportedInterestReceived()).isEqualByComparingTo("10.55");
+        assertThat(row.getReportedNpaAmount()).isEqualByComparingTo("0");
         assertThat(row.getTenure()).isEqualByComparingTo("4");
         assertThat(row.getInvestmentDate()).isEqualTo(LocalDate.of(2026, 8, 10));
         assertThat(row.getDpd()).isZero();
