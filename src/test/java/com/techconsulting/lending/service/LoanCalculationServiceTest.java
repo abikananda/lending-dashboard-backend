@@ -37,11 +37,14 @@ class LoanCalculationServiceTest {
         var out = service().calculate(1L, 1L, row, new ManualLending());
         assertThat(out.isNpa()).isTrue(); assertThat(out.getNpaReason()).isEqualTo("REPORTED_AS_NPA");
         assertThat(out.getOutstandingPrincipal()).isEqualByComparingTo("600.00");
+        assertThat(out.getNpaAmount()).isEqualByComparingTo("600.00");
     }
 
     @Test void zeroReportedNpaAmountOverridesInferredNpa() {
         var row = row(); row.setLoanStatus("NPA"); row.setReportedNpaAmount(BigDecimal.ZERO);
-        assertThat(service().calculate(1L, 1L, row, new ManualLending()).isNpa()).isFalse();
+        var out = service().calculate(1L, 1L, row, new ManualLending());
+        assertThat(out.isNpa()).isFalse();
+        assertThat(out.getNpaAmount()).isEqualByComparingTo("0.00");
     }
 
     private LoanCalculationService service() {
