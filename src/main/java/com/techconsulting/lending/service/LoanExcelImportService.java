@@ -7,6 +7,7 @@ import com.techconsulting.lending.domain.ManualLending;
 import com.techconsulting.lending.repository.ImportBatchRepository;
 import com.techconsulting.lending.repository.LoanReportStagingRepository;
 import com.techconsulting.lending.repository.ManualLendingRepository;
+import com.techconsulting.lending.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -35,6 +36,7 @@ public class LoanExcelImportService {
     private final ManualLendingRepository loans;
     private final LoanCalculationService calculations;
     private final BorrowerNameResolver borrowerNames;
+    private final UserRepository users;
     private final ObjectMapper json;
 
     @Transactional
@@ -42,6 +44,7 @@ public class LoanExcelImportService {
         String filename = file == null ? "" : Objects.requireNonNullElse(file.getOriginalFilename(), "");
         if (file == null || file.isEmpty() || !filename.toLowerCase(Locale.ROOT).endsWith(".xlsx"))
             throw new IllegalArgumentException("A non-empty .xlsx file is required");
+        validateReportOwner(userId, filename);
         byte[] bytes = file.getBytes();
         String sum = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
         var old = batches.findByUserIdAndReportTypeAndFileChecksum(userId, ImportBatch.ReportType.LOAN_REPORT, sum);
@@ -53,6 +56,22 @@ public class LoanExcelImportService {
         batch = batches.save(batch);
         parseAndProcess(userId, batch, bytes);
         return batches.save(batch);
+    }
+
+    private void validateReportOwner(Long userId, String filename) {
+        String lenderId = users.findById(userId)
+                .map(user -> user.getLenderId())
+                .filter(value -> value != null && !value.isBlank())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No LenDenClub lender ID is configured for the logged-in user"));
+        String safeFilename = filename.replace('\\', '/');
+        safeFilename = safeFilename.substring(safeFilename.lastIndexOf('/') + 1);
+        String expectedPrefix = "MANUAL_LENDING_REPORT_" + lenderId.trim() + "_";
+        if (!safeFilename.regionMatches(true, 0, expectedPrefix, 0, expectedPrefix.length())) {
+            throw new IllegalArgumentException(
+                    "This report does not belong to the logged-in lender. Expected filename starting with "
+                            + expectedPrefix);
+        }
     }
 
     private void parseAndProcess(Long userId, ImportBatch batch, byte[] bytes) throws Exception {
