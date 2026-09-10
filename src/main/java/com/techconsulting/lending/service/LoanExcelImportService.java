@@ -155,6 +155,7 @@ public class LoanExcelImportService {
         staged.setAmountReceived(decimal(get(raw, "totalamountreceived", "amountreceived")));
         staged.setReportedPrincipalReceived(optionalDecimal(get(raw, "principalreceived")));
         staged.setReportedInterestReceived(optionalDecimal(get(raw, "interestreceived")));
+        staged.setReportedNpaAmount(optionalDecimal(get(raw, "npa")));
         staged.setInvestmentDate(date(get(raw, "disbursementdate", "investmentdate")));
         staged.setLoanStatus(get(raw, "loanstatus", "status"));
         staged.setDpd(integer(get(raw, "dpddayspastdue", "dpd")));
@@ -205,6 +206,8 @@ public class LoanExcelImportService {
         if (staged.getTenure().signum() <= 0) errors.add("Tenure must be positive");
         if (staged.getInvestmentDate() == null) errors.add("Invalid disbursement date");
         if (staged.getLoanStatus() == null) errors.add("Loan status is required");
+        if (staged.getReportedNpaAmount() != null && staged.getReportedNpaAmount().signum() < 0)
+            errors.add("NPA amount cannot be negative");
         return errors;
     }
     private record Table(Sheet sheet, int headerRowIndex, Map<String, Integer> headers) { }
