@@ -47,6 +47,13 @@ class LoanCalculationServiceTest {
         assertThat(out.getNpaAmount()).isEqualByComparingTo("0.00");
     }
 
+    @Test void doesNotIncludeActiveLoanWhenReportNpaValueIsUnavailable() {
+        var row = row(); row.setInvestmentDate(LocalDate.of(2025, 1, 1));
+        var out = service().calculate(1L, 1L, row, new ManualLending());
+        assertThat(out.isNpa()).isFalse();
+        assertThat(out.getNpaAmount()).isEqualByComparingTo("0.00");
+    }
+
     private LoanCalculationService service() {
         return new LoanCalculationService(Clock.fixed(Instant.parse("2026-09-01T00:00:00Z"), ZoneOffset.UTC), false);
     }
