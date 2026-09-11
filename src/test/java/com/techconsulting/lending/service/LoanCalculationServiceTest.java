@@ -37,11 +37,26 @@ class LoanCalculationServiceTest {
         var out = service().calculate(1L, 1L, row, new ManualLending());
         assertThat(out.isNpa()).isTrue(); assertThat(out.getNpaReason()).isEqualTo("REPORTED_AS_NPA");
         assertThat(out.getOutstandingPrincipal()).isEqualByComparingTo("600.00");
+        assertThat(out.getNpaAmount()).isEqualByComparingTo("600.00");
+        assertThat(out.isProbableNpa()).isFalse();
     }
 
     @Test void zeroReportedNpaAmountOverridesInferredNpa() {
         var row = row(); row.setLoanStatus("NPA"); row.setReportedNpaAmount(BigDecimal.ZERO);
-        assertThat(service().calculate(1L, 1L, row, new ManualLending()).isNpa()).isFalse();
+        var out = service().calculate(1L, 1L, row, new ManualLending());
+        assertThat(out.isNpa()).isFalse();
+        assertThat(out.getNpaAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test void separatesProbableNpaFromOfficialReportNpa() {
+        var row = row();
+        row.setInvestmentDate(LocalDate.of(2025, 1, 1));
+        row.setReportedNpaAmount(BigDecimal.ZERO);
+        var out = service().calculate(1L, 1L, row, new ManualLending());
+        assertThat(out.isNpa()).isFalse();
+        assertThat(out.isProbableNpa()).isTrue();
+        assertThat(out.getProbableNpaAmount()).isEqualByComparingTo("750.00");
+        assertThat(out.getNpaReason()).isEqualTo("TENURE_EXCEEDED");
     }
 
     private LoanCalculationService service() {
