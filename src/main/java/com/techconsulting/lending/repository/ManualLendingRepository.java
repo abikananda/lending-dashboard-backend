@@ -10,4 +10,6 @@ public interface ManualLendingRepository extends JpaRepository<ManualLending,Lon
  @Query(value="select coalesce(sum(case when transaction_type in ('WITHDRAWAL','DEBIT','WITHDRAW') then amount else 0 end),0) from wallet_transaction where user_id=:u",nativeQuery=true) BigDecimal totalWalletWithdrawn(@Param("u") Long userId);
  @Query(value="select coalesce(sum(amount),0) from bank_credit where user_id=:u",nativeQuery=true) BigDecimal totalBankReceived(@Param("u") Long userId);
  @Query("select count(m) from ManualLending m where m.userId=:u and m.npa=true") long countNpa(@Param("u") Long userId);
- @Query("select coalesce(sum(m.outstandingPrincipal),0) from ManualLending m where m.userId=:u and m.npa=true") BigDecimal totalNpaAmount(@Param("u") Long userId); }
+ @Query("select coalesce(sum(m.npaAmount),0) from ManualLending m where m.userId=:u and m.npa=true") BigDecimal totalNpaAmount(@Param("u") Long userId);
+ @Query("select count(m) from ManualLending m where m.userId=:u and m.probableNpa=true") long countProbableNpa(@Param("u") Long userId);
+ @Query("select coalesce(sum(m.probableNpaAmount),0) from ManualLending m where m.userId=:u and m.probableNpa=true") BigDecimal totalProbableNpaAmount(@Param("u") Long userId); }
