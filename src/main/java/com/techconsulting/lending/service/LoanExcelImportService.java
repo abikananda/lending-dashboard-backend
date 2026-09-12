@@ -114,7 +114,10 @@ public class LoanExcelImportService {
 
     private void processValidRow(Long userId, ImportBatch batch, LoanReportStaging staged) {
         try {
-            if (staged.getBorrowerName() == null) borrowerNames.resolve(staged.getLoanId()).ifPresent(staged::setBorrowerName);
+            borrowerNames.resolve(staged.getLoanId()).ifPresent(identity -> {
+                staged.setBorrowerPublicId(identity.borrowerId());
+                if (staged.getBorrowerName() == null) staged.setBorrowerName(identity.name());
+            });
             var existing = loans.findByUserIdAndSchemeIdIgnoreCase(userId, staged.getSchemeId());
             loans.save(calculations.calculate(userId, batch.getId(), staged,
                     existing.orElseGet(ManualLending::new)));

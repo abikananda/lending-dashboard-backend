@@ -38,6 +38,8 @@ class LoanExcelImportServiceTest {
         when(batches.findByUserIdAndReportTypeAndFileChecksum(any(), any(), any())).thenReturn(Optional.empty());
         when(batches.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(loans.findByUserIdAndSchemeIdIgnoreCase(7L, "LOA-KLBUNNZP")).thenReturn(Optional.empty());
+        when(borrowerNames.resolve("LOA-KLBUNNZP")).thenReturn(Optional.of(
+                new BorrowerNameResolver.BorrowerIdentity("BRW-123", "Jane Doe")));
         when(calculations.calculate(any(), any(), any(), any())).thenReturn(new ManualLending());
 
         LoanExcelImportService service = new LoanExcelImportService(
@@ -52,6 +54,8 @@ class LoanExcelImportServiceTest {
         assertThat(row.getRowNumber()).isEqualTo(21);
         assertThat(row.getSchemeId()).isEqualTo("LOA-KLBUNNZP");
         assertThat(row.getLoanId()).isEqualTo("LOA-KLBUNNZP");
+        assertThat(row.getBorrowerPublicId()).isEqualTo("BRW-123");
+        assertThat(row.getBorrowerName()).isEqualTo("Jane Doe");
         assertThat(row.getInvestedAmount()).isEqualByComparingTo("500");
         assertThat(row.getAmountReceived()).isEqualByComparingTo("135.55");
         assertThat(row.getReportedPrincipalReceived()).isEqualByComparingTo("125");
