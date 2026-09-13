@@ -97,7 +97,7 @@ public class EmailReconciliationService {
     private void saveParseFailure(Long userId, EmailMessageData email, RuntimeException error,
                                   PaymentNotification value) {
         populateBase(value, userId, email);
-        value.setNotificationType(email.sender().equalsIgnoreCase(properties.getBankSender())
+        value.setNotificationType(properties.isBankSender(email.sender())
                 ? "BANK_CREDIT" : "LENDENCLUB_REPAYMENT");
         value.setParsingStatus("FAILED"); value.setAmountValidationStatus("NOT_VALIDATED");
         value.setParsingError(error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
@@ -122,7 +122,9 @@ public class EmailReconciliationService {
             BankCredit credit = new BankCredit(); credit.setUserId(userId);
             credit.setBankTransactionReference(truncate(parsed.reference(), 160)); credit.setRowFingerprint(fingerprint);
             credit.setTransactionDate(parsed.date()); credit.setAmount(parsed.total());
-            credit.setDescription(truncate(notification.getRawEmailText(), 1000)); credit.setSource("EMAIL_JANA_BANK");
+            credit.setDescription(truncate(notification.getRawEmailText(), 1000));
+            credit.setSource(notification.getSender().equalsIgnoreCase("noreply@slice.bank.in")
+                    ? "EMAIL_SLICE_BANK" : "EMAIL_JANA_BANK");
             return bankCredits.save(credit);
         });
     }
@@ -177,7 +179,7 @@ public class EmailReconciliationService {
         if (match.isPresent()) {
             PaymentNotification bankMail = match.get();
             record.setBankPaymentNotificationId(bankMail.getId());
-            record.setStatus("MATCHED"); record.setReason("LenDenClub repayment matched Jana Bank credit");
+            record.setStatus("MATCHED"); record.setReason("LenDenClub repayment matched bank credit");
             record.setBankCreditedAmount(bankMail.getReportedAmount());
             record.setDifferenceAmount(bankMail.getReportedAmount().subtract(repayment.getReportedAmount()));
             if (bankMail.getTransactionReference() != null) bankCredits
