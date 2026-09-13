@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -53,6 +54,23 @@ class RepaymentEmailParserTest {
     }
 
     @Test
+    void parsesSliceBankCreditAlert() {
+        String body = """
+                Hi ABIKANANDA,
+                You have received ₹1,612.41 via IMPS in your slice bank a/c xx3003!
+                Transaction Date 11-Sep-26
+                """;
+        var result = parser.parse(new EmailMessageData("m4", "noreply@slice.bank.in",
+                "Received ₹1,612.41 via IMPS", Instant.now(), body)).orElseThrow();
+
+        assertThat(result.type()).isEqualTo("BANK_CREDIT");
+        assertThat(result.date()).isEqualTo(LocalDate.of(2026, 9, 11));
+        assertThat(result.total()).isEqualByComparingTo("1612.41");
+        assertThat(result.accountLast4()).isEqualTo("3003");
+        assertThat(result.reference()).isNull();
+    }
+
+    @Test
     void flagsIncorrectPrincipalAndInterestBreakdown() {
         String body = """
                 ending with XXXXXXXXXXXX6643 within 5 working days
@@ -68,7 +86,7 @@ class RepaymentEmailParserTest {
     private EmailReconciliationProperties properties() {
         EmailReconciliationProperties value = new EmailReconciliationProperties();
         value.setLendenclubSender("noreply@lendenclub.com");
-        value.setBankSender("noreply@jana.bank.in");
+        value.setBankSenders(List.of("noreply@jana.bank.in", "noreply@slice.bank.in"));
         return value;
     }
 }
