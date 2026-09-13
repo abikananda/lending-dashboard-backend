@@ -62,6 +62,10 @@ public class LendingController {
         return dashboardStats.snapshot(p.id());
     }
 
+    static String portfolioHealth(BigDecimal npaPercentage, BigDecimal probableNpaPercentage) {
+        return DashboardStatsService.portfolioHealth(npaPercentage, probableNpaPercentage);
+    }
+
     @DeleteMapping("/dashboard/uploaded-data")
     UploadedDataCleanupService.CleanupResult cleanup(@AuthenticationPrincipal AppPrincipal p) {
         return cleanupService.cleanup(p.id());
