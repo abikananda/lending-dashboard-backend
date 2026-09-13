@@ -18,3 +18,21 @@ Characterization formula retained from PFMP:
 `interestReceived = amountReceived - principalReceived`
 
 Production deployments must supply database credentials and a strong JWT secret through environment variables.
+
+
+## Manual upload email notification
+
+After a new manual-lending report commits successfully, the backend sends an asynchronous email
+containing the dashboard statistics before and after the upload and details of borrowers newly
+moved to NPA. Duplicate uploads and rolled-back uploads do not send a notification.
+
+Configure SMTP with a Gmail app password:
+
+```powershell
+$env:UPLOAD_NOTIFICATION_ENABLED="true"
+$env:MAIL_USERNAME="sender@gmail.com"
+$env:MAIL_APP_PASSWORD = Read-Host "Gmail app password" -MaskInput
+$env:UPLOAD_NOTIFICATION_FROM="sender@gmail.com"
+```
+
+The recipient is the authenticated dashboard user's registered email address.
