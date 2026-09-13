@@ -21,7 +21,7 @@ Production deployments must supply database credentials and a strong JWT secret 
 
 ## Email repayment reconciliation
 
-The backend can read LenDenClub repayment emails and Jana Bank credit alerts from the Gmail
+The backend can read LenDenClub repayment emails and Jana Bank or Slice Bank credit alerts from the Gmail
 account belonging to a registered dashboard user. It validates the LenDenClub breakdown
 (`principal + interest = total`) and matches the payout to an equal bank credit for the same
 account within five weekdays.
@@ -32,6 +32,7 @@ Configure Gmail IMAP with an app password; do not use the normal Gmail password:
 $env:EMAIL_RECONCILIATION_ENABLED="true"
 $env:GMAIL_IMAP_USERNAME="your-dashboard-email@example.com"
 $env:GMAIL_IMAP_APP_PASSWORD = Read-Host "Gmail app password" -MaskInput
+$env:BANK_EMAIL_SENDERS="noreply@jana.bank.in,noreply@slice.bank.in"
 ```
 
 The scheduled sync runs daily at 11:00 PM in `Asia/Kolkata`. These authenticated endpoints are
