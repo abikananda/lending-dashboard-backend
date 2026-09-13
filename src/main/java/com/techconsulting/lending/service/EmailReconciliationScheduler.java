@@ -22,7 +22,7 @@ public class EmailReconciliationScheduler {
     public void reconcileAtElevenPm() {
         if (!properties.isEnabled()) return;
         try {
-            var result = service.syncForConfiguredMailbox();
+            var result = service.syncAllEnabled();
             log.info("Scheduled email reconciliation completed imported={} duplicates={} parseFailures={} reconciliations={}",
                     result.importedEmails(), result.duplicateEmails(), result.parsingFailures(),
                     result.reconciliationsUpdated());
