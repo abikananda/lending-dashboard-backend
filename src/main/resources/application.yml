@@ -10,6 +10,14 @@ spring:
     max-file-size: 20MB
     max-request-size: 20MB
   flyway.enabled: true
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_APP_PASSWORD:}
+    properties.mail.smtp:
+      auth: true
+      starttls.enable: true
 server.port: ${SERVER_PORT:8080}
 app:
   jwt-secret: ${JWT_SECRET:change-this-development-secret-change-this-development-secret}
@@ -18,4 +26,7 @@ app:
   npa-on-dpd-over-seven: false
   # Optional, for example http://localhost:8081/api/borrowers/{loanId}
   borrower-lookup-url: ${BORROWER_LOOKUP_URL:}
+  upload-notification:
+    enabled: ${UPLOAD_NOTIFICATION_ENABLED:false}
+    from: ${UPLOAD_NOTIFICATION_FROM:${MAIL_USERNAME:}}
 springdoc.swagger-ui.path: /swagger-ui.html
