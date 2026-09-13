@@ -21,10 +21,16 @@ public class RepaymentEmailParser {
     private static final Pattern LDC_DATE = Pattern.compile(
             "(?i)(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\\.?\\s+(\\d{1,2}),\\s+(\\d{4})");
     private static final Pattern ACCOUNT = Pattern.compile("(?i)(?:ending\\s+with|A/c\\s+no\\.)\\s*X*(\\d{4})");
-    private static final Pattern BANK = Pattern.compile("(?is)A/c\\s+no\\.\\s*X*(\\d{4})\\s+is\\s+credited\\s+with\\s+INR\\s+"
+    private static final Pattern JANA_BANK = Pattern.compile("(?is)A/c\\s+no\\.\\s*X*(\\d{4})\\s+is\\s+credited\\s+with\\s+INR\\s+"
             + AMOUNT + "\\s+on\\s+(\\d{1,2}-[A-Z]{3}-\\d{4})\\.\\s*Info:\\s*([^\\r\\n]+)");
+    private static final Pattern SLICE_BANK = Pattern.compile("(?is)(?:received\\s+)?₹\\s*" + AMOUNT
+            + "\\s+via\\s+IMPS\\s+in\\s+your\\s+slice\\s+bank\\s+a/c\\s+x*(\\d{4}).*?"
+            + "Transaction\\s+Date\\s+(\\d{1,2}-[A-Z]{3}-\\d{2,4})");
     private static final DateTimeFormatter BANK_DATE = new DateTimeFormatterBuilder().parseCaseInsensitive()
             .appendPattern("dd-MMM-uuuu").toFormatter(Locale.ENGLISH);
+    private static final DateTimeFormatter SLICE_DATE = new DateTimeFormatterBuilder().parseCaseInsensitive()
+            .appendPattern("d-MMM-").appendValueReduced(java.time.temporal.ChronoField.YEAR, 2, 2, 2000)
+            .toFormatter(Locale.ENGLISH);
     private final EmailReconciliationProperties properties;
 
     public RepaymentEmailParser(EmailReconciliationProperties properties) {
@@ -34,7 +40,7 @@ public class RepaymentEmailParser {
     public Optional<ParsedEmail> parse(EmailMessageData email) {
         String sender = email.sender() == null ? "" : email.sender().trim();
         if (sender.equalsIgnoreCase(properties.getLendenclubSender())) return Optional.of(parseLendenclub(email));
-        if (sender.equalsIgnoreCase(properties.getBankSender())) return Optional.of(parseBank(email));
+        if (properties.isBankSender(sender)) return Optional.of(parseBank(email));
         return Optional.empty();
     }
 
@@ -58,7 +64,13 @@ public class RepaymentEmailParser {
     }
 
     private ParsedEmail parseBank(EmailMessageData email) {
-        Matcher bank = BANK.matcher(email.body());
+        if (email.sender().equalsIgnoreCase("noreply@slice.bank.in")) {
+            Matcher slice = SLICE_BANK.matcher(email.body());
+            if (!slice.find()) throw new IllegalArgumentException("Slice credit amount, account or date was not found");
+            return new ParsedEmail("BANK_CREDIT", LocalDate.parse(slice.group(3), SLICE_DATE), amount(slice.group(1)),
+                    null, null, null, slice.group(2), null, "VALID", null);
+        }
+        Matcher bank = JANA_BANK.matcher(email.body());
         if (!bank.find()) throw new IllegalArgumentException("Bank credit amount, date or reference was not found");
         return new ParsedEmail("BANK_CREDIT", LocalDate.parse(bank.group(3), BANK_DATE), amount(bank.group(2)),
                 null, null, null, bank.group(1), bank.group(4).trim(), "VALID", null);
