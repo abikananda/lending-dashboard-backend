@@ -38,7 +38,7 @@ public class DashboardStatsService {
                 : amount.multiply(BigDecimal.valueOf(100)).divide(principal,4,RoundingMode.HALF_UP);
     }
 
-    static String portfolioHealth(BigDecimal npaPercentage,BigDecimal probableNpaPercentage) {
+    public static String portfolioHealth(BigDecimal npaPercentage,BigDecimal probableNpaPercentage) {
         if(npaPercentage.compareTo(BigDecimal.valueOf(20))>0||probableNpaPercentage.compareTo(BigDecimal.valueOf(40))>0)
             return "Critical";
         if(npaPercentage.compareTo(BigDecimal.valueOf(15))>0||probableNpaPercentage.compareTo(BigDecimal.valueOf(30))>0)
