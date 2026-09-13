@@ -8,6 +8,7 @@ import jakarta.mail.search.OrTerm;
 import jakarta.mail.search.ReceivedDateTerm;
 import jakarta.mail.search.FromStringTerm;
 import jakarta.mail.search.ComparisonTerm;
+import jakarta.mail.search.SearchTerm;
 import org.jsoup.Jsoup;
 import org.springframework.stereotype.Component;
 
@@ -42,8 +43,10 @@ public class GmailImapClient {
             try {
                 folder.open(Folder.READ_ONLY);
                 Date since = Date.from(Instant.now().minus(Math.max(1, properties.getLookbackDays()), ChronoUnit.DAYS));
-                var sender = new OrTerm(new FromStringTerm(properties.getLendenclubSender()),
-                        new FromStringTerm(properties.getBankSender()));
+                List<SearchTerm> senderTerms = new ArrayList<>();
+                senderTerms.add(new FromStringTerm(properties.getLendenclubSender()));
+                properties.getBankSenders().stream().map(FromStringTerm::new).forEach(senderTerms::add);
+                var sender = new OrTerm(senderTerms.toArray(SearchTerm[]::new));
                 Message[] messages = folder.search(new AndTerm(
                         new ReceivedDateTerm(ComparisonTerm.GE, since), sender));
                 for (Message message : messages) {
