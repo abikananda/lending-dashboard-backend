@@ -4,6 +4,8 @@ import com.techconsulting.lending.config.EmailReconciliationProperties;
 import com.techconsulting.lending.domain.*;
 import com.techconsulting.lending.repository.*;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -13,32 +15,29 @@ import java.util.*;
 
 @Service
 public class EmailReconciliationService {
+    private static final Logger log = LoggerFactory.getLogger(EmailReconciliationService.class);
     private final GmailImapClient gmail;
     private final RepaymentEmailParser parser;
     private final PaymentNotificationRepository notifications;
     private final BankCreditRepository bankCredits;
     private final ReconciliationRecordRepository reconciliations;
     private final UserRepository users;
+    private final EmailReconciliationAccountRepository accounts;
+    private final EmailCredentialCipher credentialCipher;
     private final EmailReconciliationProperties properties;
-    private final Clock clock;
+    private final Clock clock = Clock.system(ZoneId.of("Asia/Kolkata"));
 
     public EmailReconciliationService(GmailImapClient gmail, RepaymentEmailParser parser,
                                       PaymentNotificationRepository notifications,
                                       BankCreditRepository bankCredits,
                                       ReconciliationRecordRepository reconciliations,
-                                      UserRepository users, EmailReconciliationProperties properties) {
-        this(gmail, parser, notifications, bankCredits, reconciliations, users, properties,
-                Clock.system(ZoneId.of("Asia/Kolkata")));
-    }
-
-    EmailReconciliationService(GmailImapClient gmail, RepaymentEmailParser parser,
-                               PaymentNotificationRepository notifications,
-                               BankCreditRepository bankCredits,
-                               ReconciliationRecordRepository reconciliations,
-                               UserRepository users, EmailReconciliationProperties properties, Clock clock) {
+                                      UserRepository users, EmailReconciliationAccountRepository accounts,
+                                      EmailCredentialCipher credentialCipher,
+                                      EmailReconciliationProperties properties) {
         this.gmail = gmail; this.parser = parser; this.notifications = notifications;
         this.bankCredits = bankCredits; this.reconciliations = reconciliations;
-        this.users = users; this.properties = properties; this.clock = clock;
+        this.users = users; this.accounts = accounts; this.credentialCipher = credentialCipher;
+        this.properties = properties;
     }
 
     public SyncResult syncForConfiguredMailbox() {
@@ -48,13 +47,43 @@ public class EmailReconciliationService {
         return sync(user.getId());
     }
 
+    public synchronized SyncResult syncAllEnabled() {
+        List<EmailReconciliationAccount> enabled = accounts.findByEnabledTrueOrderById();
+        if (enabled.isEmpty() && properties.getUsername() != null && !properties.getUsername().isBlank())
+            return syncForConfiguredMailbox();
+        SyncResult total = new SyncResult(0, 0, 0, 0);
+        for (EmailReconciliationAccount account : enabled) {
+            try { total = total.add(syncAccount(account)); }
+            catch (RuntimeException ex) { log.error("Email reconciliation failed for account id={} label={}",
+                    account.getId(), account.getLabel(), ex); }
+        }
+        return total;
+    }
+
     public synchronized SyncResult sync(Long userId) {
+        users.findById(userId).orElseThrow();
+        List<EmailReconciliationAccount> configured = accounts.findByUserIdOrderById(userId).stream()
+                .filter(EmailReconciliationAccount::isEnabled).toList();
+        if (!configured.isEmpty()) {
+            SyncResult total = new SyncResult(0, 0, 0, 0);
+            for (EmailReconciliationAccount account : configured) total = total.add(syncAccount(account));
+            return total;
+        }
         User user = users.findById(userId).orElseThrow();
         if (!user.getEmail().equalsIgnoreCase(properties.getUsername()))
-            throw new IllegalArgumentException("Logged-in user email does not match configured Gmail account");
+            throw new IllegalArgumentException("No enabled email reconciliation account is configured");
+        return importEmails(userId, null, gmail.fetch());
+    }
 
+    private SyncResult syncAccount(EmailReconciliationAccount account) {
+        return importEmails(account.getUserId(), account,
+                gmail.fetch(account.getMailboxEmail(), credentialCipher.decrypt(account.getEncryptedAppPassword()),
+                        account.getBankSender()));
+    }
+
+    private SyncResult importEmails(Long userId, EmailReconciliationAccount account, List<EmailMessageData> emails) {
         int imported = 0, duplicates = 0, parseFailures = 0;
-        for (EmailMessageData email : gmail.fetch()) {
+        for (EmailMessageData email : emails) {
             Optional<PaymentNotification> existing = notifications.findByUserIdAndEmailMessageId(
                     userId, truncate(email.messageId(), 255));
             if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
@@ -64,16 +93,23 @@ public class EmailReconciliationService {
             try {
                 Optional<RepaymentEmailParser.ParsedEmail> parsed = parser.parse(email);
                 if (parsed.isEmpty()) continue;
+                if (account != null && parsed.get().accountLast4() != null
+                        && !account.getBankAccountLast4().equals(parsed.get().accountLast4()))
+                    throw new IllegalArgumentException("Email account ending does not match configured bank account");
                 PaymentNotification notification = saveNotification(userId, email, parsed.get(),
                         existing.orElseGet(PaymentNotification::new));
+                notification.setReconciliationAccountId(account == null ? null : account.getId());
+                notification = notifications.save(notification);
                 if ("BANK_CREDIT".equals(parsed.get().type())) saveBankCredit(userId, notification, parsed.get());
                 imported++;
             } catch (RuntimeException ex) {
-                saveParseFailure(userId, email, ex, existing.orElseGet(PaymentNotification::new));
+                PaymentNotification failed = existing.orElseGet(PaymentNotification::new);
+                failed.setReconciliationAccountId(account == null ? null : account.getId());
+                saveParseFailure(userId, email, ex, failed);
                 parseFailures++;
             }
         }
-        int reconciled = reconcile(userId);
+        int reconciled = reconcile(userId, account == null ? null : account.getId());
         return new SyncResult(imported, duplicates, parseFailures, reconciled);
     }
 
@@ -129,7 +165,7 @@ public class EmailReconciliationService {
         });
     }
 
-    private int reconcile(Long userId) {
+    private int reconcile(Long userId, Long accountId) {
         LocalDate today = LocalDate.now(clock);
         LocalDate from = today.minusDays(Math.max(1, properties.getLookbackDays()));
         List<PaymentNotification> lender = notifications
@@ -138,6 +174,10 @@ public class EmailReconciliationService {
         List<PaymentNotification> bank = notifications
                 .findByUserIdAndNotificationTypeAndNotificationDateBetweenOrderByNotificationDateDesc(
                         userId, "BANK_CREDIT", from, today.plusDays(7));
+        if (accountId != null) {
+            lender = lender.stream().filter(value -> accountId.equals(value.getReconciliationAccountId())).toList();
+            bank = bank.stream().filter(value -> accountId.equals(value.getReconciliationAccountId())).toList();
+        }
         Set<Long> usedBankNotifications = new HashSet<>();
         reconciliations.findByUserIdAndReconciliationDateBetweenOrderByReconciliationDateDesc(userId, from, today)
                 .stream().map(ReconciliationRecord::getBankPaymentNotificationId).filter(Objects::nonNull)
@@ -226,5 +266,10 @@ public class EmailReconciliationService {
     }
 
     public record SyncResult(int importedEmails, int duplicateEmails, int parsingFailures,
-                             int reconciliationsUpdated) { }
+                             int reconciliationsUpdated) {
+        SyncResult add(SyncResult other) {
+            return new SyncResult(importedEmails + other.importedEmails, duplicateEmails + other.duplicateEmails,
+                    parsingFailures + other.parsingFailures, reconciliationsUpdated + other.reconciliationsUpdated);
+        }
+    }
 }
