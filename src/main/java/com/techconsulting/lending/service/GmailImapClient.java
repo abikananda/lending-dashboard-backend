@@ -28,6 +28,16 @@ public class GmailImapClient {
 
     public List<EmailMessageData> fetch() {
         validateConfiguration();
+        return fetch(properties.getUsername(), properties.getAppPassword(), properties.getBankSenders());
+    }
+
+    public List<EmailMessageData> fetch(String username, String appPassword, String bankSender) {
+        if (username == null || username.isBlank()) throw new IllegalArgumentException("Mailbox email is required");
+        if (appPassword == null || appPassword.isBlank()) throw new IllegalArgumentException("Gmail app password is required");
+        return fetch(username, appPassword, List.of(bankSender));
+    }
+
+    private List<EmailMessageData> fetch(String username, String appPassword, List<String> bankSenders) {
         Properties mail = new Properties();
         mail.put("mail.store.protocol", "imaps");
         mail.put("mail.imaps.host", properties.getHost());
@@ -38,14 +48,14 @@ public class GmailImapClient {
 
         List<EmailMessageData> result = new ArrayList<>();
         try (Store store = Session.getInstance(mail).getStore("imaps")) {
-            store.connect(properties.getHost(), properties.getPort(), properties.getUsername(), properties.getAppPassword());
+            store.connect(properties.getHost(), properties.getPort(), username, appPassword);
             Folder folder = store.getFolder(properties.getFolder());
             try {
                 folder.open(Folder.READ_ONLY);
                 Date since = Date.from(Instant.now().minus(Math.max(1, properties.getLookbackDays()), ChronoUnit.DAYS));
                 List<SearchTerm> senderTerms = new ArrayList<>();
                 senderTerms.add(new FromStringTerm(properties.getLendenclubSender()));
-                properties.getBankSenders().stream().map(FromStringTerm::new).forEach(senderTerms::add);
+                bankSenders.stream().map(FromStringTerm::new).forEach(senderTerms::add);
                 var sender = new OrTerm(senderTerms.toArray(SearchTerm[]::new));
                 Message[] messages = folder.search(new AndTerm(
                         new ReceivedDateTerm(ComparisonTerm.GE, since), sender));
