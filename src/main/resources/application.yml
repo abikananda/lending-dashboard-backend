@@ -29,5 +29,5 @@ email-reconciliation:
   cron: ${EMAIL_RECONCILIATION_CRON:0 0 23 * * *}
   zone: ${EMAIL_RECONCILIATION_ZONE:Asia/Kolkata}
   lendenclub-sender: ${LENDENCLUB_EMAIL_SENDER:noreply@lendenclub.com}
-  bank-sender: ${BANK_EMAIL_SENDER:noreply@jana.bank.in}
+  bank-senders: ${BANK_EMAIL_SENDERS:noreply@jana.bank.in,noreply@slice.bank.in}
 springdoc.swagger-ui.path: /swagger-ui.html
