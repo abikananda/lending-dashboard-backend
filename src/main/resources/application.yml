@@ -30,4 +30,5 @@ email-reconciliation:
   zone: ${EMAIL_RECONCILIATION_ZONE:Asia/Kolkata}
   lendenclub-sender: ${LENDENCLUB_EMAIL_SENDER:noreply@lendenclub.com}
   bank-senders: ${BANK_EMAIL_SENDERS:noreply@jana.bank.in,noreply@slice.bank.in}
+  credential-encryption-key: ${EMAIL_CREDENTIAL_ENCRYPTION_KEY:}
 springdoc.swagger-ui.path: /swagger-ui.html
