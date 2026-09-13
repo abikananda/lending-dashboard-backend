@@ -8,7 +8,7 @@ import com.techconsulting.lending.repository.ImportBatchRepository;
 import com.techconsulting.lending.repository.LoanReportStagingRepository;
 import com.techconsulting.lending.repository.ManualLendingRepository;
 import com.techconsulting.lending.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
@@ -24,7 +24,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @Service
-@RequiredArgsConstructor
 public class LoanExcelImportService {
     private static final int HEADER_SCAN_LIMIT = 100;
     private static final List<DateTimeFormatter> DATE_FORMATS = List.of(
@@ -38,6 +37,24 @@ public class LoanExcelImportService {
     private final BorrowerNameResolver borrowerNames;
     private final UserRepository users;
     private final ObjectMapper json;
+    private final DashboardStatsService dashboardStats;
+    private final UploadNotificationDispatcher notificationDispatcher;
+
+    @Autowired
+    public LoanExcelImportService(ImportBatchRepository batches, LoanReportStagingRepository staging,
+            ManualLendingRepository loans, LoanCalculationService calculations, BorrowerNameResolver borrowerNames,
+            UserRepository users, ObjectMapper json, DashboardStatsService dashboardStats,
+            UploadNotificationDispatcher notificationDispatcher) {
+        this.batches=batches; this.staging=staging; this.loans=loans; this.calculations=calculations;
+        this.borrowerNames=borrowerNames; this.users=users; this.json=json;
+        this.dashboardStats=dashboardStats; this.notificationDispatcher=notificationDispatcher;
+    }
+
+    LoanExcelImportService(ImportBatchRepository batches, LoanReportStagingRepository staging,
+            ManualLendingRepository loans, LoanCalculationService calculations, BorrowerNameResolver borrowerNames,
+            UserRepository users, ObjectMapper json) {
+        this(batches,staging,loans,calculations,borrowerNames,users,json,null,null);
+    }
 
     @Transactional
     public ImportBatch upload(Long userId, MultipartFile file) throws Exception {
@@ -49,13 +66,29 @@ public class LoanExcelImportService {
         String sum = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
         var old = batches.findByUserIdAndReportTypeAndFileChecksum(userId, ImportBatch.ReportType.LOAN_REPORT, sum);
         if (old.isPresent()) return old.get();
+        var before = dashboardStats == null ? null : dashboardStats.snapshot(userId);
+        Set<String> npaBefore = dashboardStats == null ? Set.of() : loans.findByUserIdOrderByInvestmentDateDesc(userId)
+                .stream().filter(ManualLending::isNpa).map(this::loanKey).collect(java.util.stream.Collectors.toSet());
         ImportBatch batch = new ImportBatch();
         batch.setUserId(userId); batch.setReportType(ImportBatch.ReportType.LOAN_REPORT);
         batch.setOriginalFileName(filename); batch.setFileChecksum(sum); batch.setFileSize(bytes.length);
         batch.setStatus(ImportBatch.Status.PROCESSING); batch.setStartedAt(Instant.now());
         batch = batches.save(batch);
         parseAndProcess(userId, batch, bytes);
-        return batches.save(batch);
+        ImportBatch saved = batches.save(batch);
+        if (dashboardStats != null) {
+            var after = dashboardStats.snapshot(userId);
+            List<ManualUploadNotification.NewNpaBorrower> newNpa = loans.findByUserIdOrderByInvestmentDateDesc(userId)
+                    .stream().filter(ManualLending::isNpa).filter(value -> !npaBefore.contains(loanKey(value)))
+                    .map(value -> new ManualUploadNotification.NewNpaBorrower(value.getBorrowerName(),
+                            value.getLoanId(), value.getSchemeId(), value.getInvestedAmount(),
+                            value.getCalculatedPrincipalReceived(), value.getNpaAmount(), value.getNpaReason()))
+                    .toList();
+            String recipient = users.findById(userId).orElseThrow().getEmail();
+            notificationDispatcher.afterCommit(new ManualUploadNotification(saved.getId(), filename, recipient,
+                    before, after, newNpa));
+        }
+        return saved;
     }
 
     private void validateReportOwner(Long userId, String filename) {
@@ -210,5 +243,11 @@ public class LoanExcelImportService {
             errors.add("NPA amount cannot be negative");
         return errors;
     }
+    private String loanKey(ManualLending value) {
+        if (value.getSchemeId() != null && !value.getSchemeId().isBlank()) return "SCHEME:" + value.getSchemeId();
+        if (value.getLoanId() != null && !value.getLoanId().isBlank()) return "LOAN:" + value.getLoanId();
+        return "ID:" + value.getId();
+    }
+
     private record Table(Sheet sheet, int headerRowIndex, Map<String, Integer> headers) { }
 }
