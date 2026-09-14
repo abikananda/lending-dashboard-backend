@@ -2,7 +2,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/lending_dashboard?createDatabaseIfNotExist=true}
     username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:root}
+    password: ${DB_PASSWORD:}
   jpa:
     hibernate.ddl-auto: validate
     open-in-view: false
@@ -12,10 +12,23 @@ spring:
   flyway.enabled: true
 server.port: ${SERVER_PORT:8080}
 app:
-  jwt-secret: ${JWT_SECRET:change-this-development-secret-change-this-development-secret}
+  jwt-secret: ${JWT_SECRET:}
   jwt-expiration: PT8H
   cors-origins: ${CORS_ORIGINS:http://localhost:4200}
   npa-on-dpd-over-seven: false
   # Optional, for example http://localhost:8081/api/borrowers/{loanId}
   borrower-lookup-url: ${BORROWER_LOOKUP_URL:}
+email-reconciliation:
+  enabled: ${EMAIL_RECONCILIATION_ENABLED:false}
+  host: ${GMAIL_IMAP_HOST:imap.gmail.com}
+  port: ${GMAIL_IMAP_PORT:993}
+  username: ${GMAIL_IMAP_USERNAME:}
+  app-password: ${GMAIL_IMAP_APP_PASSWORD:}
+  folder: ${GMAIL_IMAP_FOLDER:INBOX}
+  lookback-days: ${EMAIL_RECONCILIATION_LOOKBACK_DAYS:10}
+  cron: ${EMAIL_RECONCILIATION_CRON:0 0 23 * * *}
+  zone: ${EMAIL_RECONCILIATION_ZONE:Asia/Kolkata}
+  lendenclub-sender: ${LENDENCLUB_EMAIL_SENDER:noreply@lendenclub.com}
+  bank-senders: ${BANK_EMAIL_SENDERS:noreply@jana.bank.in,noreply@slice.bank.in}
+  credential-encryption-key: ${EMAIL_CREDENTIAL_ENCRYPTION_KEY:}
 springdoc.swagger-ui.path: /swagger-ui.html
