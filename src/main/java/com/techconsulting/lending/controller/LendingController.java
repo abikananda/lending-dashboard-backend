@@ -1,16 +1,73 @@
 package com.techconsulting.lending.controller;
-import com.techconsulting.lending.domain.*; import com.techconsulting.lending.repository.*; import com.techconsulting.lending.security.JwtFilter.AppPrincipal; import com.techconsulting.lending.service.LoanExcelImportService; import com.techconsulting.lending.service.UploadedDataCleanupService; import lombok.RequiredArgsConstructor; import org.springframework.data.domain.*; import org.springframework.http.*; import org.springframework.security.core.annotation.AuthenticationPrincipal; import org.springframework.web.bind.annotation.*; import org.springframework.web.multipart.MultipartFile; import java.math.BigDecimal; import java.util.*;
-@RestController @RequestMapping("/api/v1") @RequiredArgsConstructor public class LendingController { private final LoanExcelImportService importer;private final UploadedDataCleanupService cleanupService;private final ImportBatchRepository batches;private final LoanReportStagingRepository staging;private final ManualLendingRepository loans;private final LendingPortfolioRepository portfolios;
- @PostMapping(value="/imports/loan-report",consumes=MediaType.MULTIPART_FORM_DATA_VALUE) ImportBatch upload(@AuthenticationPrincipal AppPrincipal p,@RequestPart("file") MultipartFile file)throws Exception{return importer.upload(p.id(),file);}
- @GetMapping("/imports") List<ImportBatch> imports(@AuthenticationPrincipal AppPrincipal p){return batches.findByUserIdOrderByCreatedAtDesc(p.id());}
- @GetMapping("/imports/{id}") ImportBatch batch(@AuthenticationPrincipal AppPrincipal p,@PathVariable Long id){return batches.findById(id).filter(x->x.getUserId().equals(p.id())).orElseThrow();}
- @GetMapping("/imports/{id}/rows") List<LoanReportStaging> rows(@AuthenticationPrincipal AppPrincipal p,@PathVariable Long id){batch(p,id);return staging.findByImportBatchIdOrderByRowNumber(id);}
- @GetMapping("/loans") List<ManualLending> loanList(@AuthenticationPrincipal AppPrincipal p){return loans.findByUserIdOrderByInvestmentDateDesc(p.id());}
- public record DashboardSummary(BigDecimal investmentPrincipal,BigDecimal totalAmountLent,BigDecimal totalAmountReceived,BigDecimal interestEarned,BigDecimal interestPercentage,BigDecimal outstandingPrincipal,BigDecimal amountAvailableToInvest,BigDecimal principalLoss,BigDecimal principalLossPercentage,BigDecimal walletAdded,BigDecimal walletWithdrawn,BigDecimal bankReceived,long activeLoans,long closedLoans,long npaLoans,BigDecimal npaAmount,BigDecimal npaPercentage,long probableNpaLoans,BigDecimal probableNpaAmount,BigDecimal probableNpaPercentage,String portfolioHealth){}
- public record PrincipalRequest(BigDecimal amount){}
- @GetMapping("/dashboard/summary") DashboardSummary summary(@AuthenticationPrincipal AppPrincipal p){BigDecimal principal=portfolios.findByUserId(p.id()).map(LendingPortfolio::getInvestmentPrincipalAmount).orElse(BigDecimal.ZERO);BigDecimal interest=loans.totalInterestEarned(p.id());BigDecimal outstanding=loans.totalOutstanding(p.id());BigDecimal loss=loans.totalPrincipalLoss(p.id());BigDecimal npaAmount=loans.totalNpaAmount(p.id());BigDecimal probableNpaAmount=loans.totalProbableNpaAmount(p.id());BigDecimal npaPercentage=percent(npaAmount,principal);BigDecimal probableNpaPercentage=percent(probableNpaAmount,principal);BigDecimal percentage=percent(interest,principal);BigDecimal available=principal.add(interest).subtract(outstanding).max(BigDecimal.ZERO);return new DashboardSummary(principal,loans.totalInvested(p.id()),loans.totalReceived(p.id()),interest,percentage,outstanding,available,loss,percent(loss,principal),loans.totalWalletAdded(p.id()),loans.totalWalletWithdrawn(p.id()),loans.totalBankReceived(p.id()),loans.countStatus(p.id(),"ACTIVE"),loans.countStatus(p.id(),"CLOSED"),loans.countNpa(p.id()),npaAmount,npaPercentage,loans.countProbableNpa(p.id()),probableNpaAmount,probableNpaPercentage,portfolioHealth(npaPercentage,probableNpaPercentage));}
- @PutMapping("/dashboard/principal") DashboardSummary principal(@AuthenticationPrincipal AppPrincipal p,@RequestBody PrincipalRequest request){if(request.amount()==null||request.amount().signum()<0)throw new IllegalArgumentException("Principal amount must be zero or positive");LendingPortfolio portfolio=portfolios.findByUserId(p.id()).orElseGet(LendingPortfolio::new);portfolio.setUserId(p.id());portfolio.setInvestmentPrincipalAmount(request.amount());portfolios.save(portfolio);return summary(p);}
- @DeleteMapping("/dashboard/uploaded-data") UploadedDataCleanupService.CleanupResult cleanup(@AuthenticationPrincipal AppPrincipal p){return cleanupService.cleanup(p.id());}
- private BigDecimal percent(BigDecimal amount,BigDecimal principal){return principal.signum()==0?BigDecimal.ZERO:amount.multiply(BigDecimal.valueOf(100)).divide(principal,4,java.math.RoundingMode.HALF_UP);}
- static String portfolioHealth(BigDecimal npaPercentage,BigDecimal probableNpaPercentage){if(npaPercentage.compareTo(BigDecimal.valueOf(20))>0||probableNpaPercentage.compareTo(BigDecimal.valueOf(40))>0)return "Critical";if(npaPercentage.compareTo(BigDecimal.valueOf(15))>0||probableNpaPercentage.compareTo(BigDecimal.valueOf(30))>0)return "Needs attention";return "Healthy";}
+
+import com.techconsulting.lending.domain.*;
+import com.techconsulting.lending.dto.DashboardSummary;
+import com.techconsulting.lending.repository.*;
+import com.techconsulting.lending.security.JwtFilter.AppPrincipal;
+import com.techconsulting.lending.service.*;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.*;
+import org.springframework.http.*;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.math.BigDecimal;
+import java.util.*;
+
+@RestController
+@RequestMapping("/api/v1")
+@RequiredArgsConstructor
+public class LendingController {
+    private final LoanExcelImportService importer;
+    private final UploadedDataCleanupService cleanupService;
+    private final ImportBatchRepository batches;
+    private final LoanReportStagingRepository staging;
+    private final ManualLendingRepository loans;
+    private final LendingPortfolioRepository portfolios;
+    private final DashboardStatsService dashboardStats;
+
+    @PostMapping(value="/imports/loan-report",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    ImportBatch upload(@AuthenticationPrincipal AppPrincipal p,@RequestPart("file") MultipartFile file)throws Exception {
+        return importer.upload(p.id(),file);
+    }
+    @GetMapping("/imports") List<ImportBatch> imports(@AuthenticationPrincipal AppPrincipal p) {
+        return batches.findByUserIdOrderByCreatedAtDesc(p.id());
+    }
+    @GetMapping("/imports/{id}") ImportBatch batch(@AuthenticationPrincipal AppPrincipal p,@PathVariable Long id) {
+        return batches.findById(id).filter(x->x.getUserId().equals(p.id())).orElseThrow();
+    }
+    @GetMapping("/imports/{id}/rows") List<LoanReportStaging> rows(
+            @AuthenticationPrincipal AppPrincipal p,@PathVariable Long id) {
+        batch(p,id); return staging.findByImportBatchIdOrderByRowNumber(id);
+    }
+    @GetMapping("/loans") List<ManualLending> loanList(@AuthenticationPrincipal AppPrincipal p) {
+        return loans.findByUserIdOrderByInvestmentDateDesc(p.id());
+    }
+
+    public record PrincipalRequest(BigDecimal amount) { }
+
+    @GetMapping("/dashboard/summary")
+    DashboardSummary summary(@AuthenticationPrincipal AppPrincipal p) {
+        return dashboardStats.snapshot(p.id());
+    }
+
+    @PutMapping("/dashboard/principal")
+    DashboardSummary principal(@AuthenticationPrincipal AppPrincipal p,@RequestBody PrincipalRequest request) {
+        if(request.amount()==null||request.amount().signum()<0)
+            throw new IllegalArgumentException("Principal amount must be zero or positive");
+        LendingPortfolio portfolio=portfolios.findByUserId(p.id()).orElseGet(LendingPortfolio::new);
+        portfolio.setUserId(p.id()); portfolio.setInvestmentPrincipalAmount(request.amount());
+        portfolios.save(portfolio);
+        return dashboardStats.snapshot(p.id());
+    }
+
+    static String portfolioHealth(BigDecimal npaPercentage, BigDecimal probableNpaPercentage) {
+        return DashboardStatsService.portfolioHealth(npaPercentage, probableNpaPercentage);
+    }
+
+    @DeleteMapping("/dashboard/uploaded-data")
+    UploadedDataCleanupService.CleanupResult cleanup(@AuthenticationPrincipal AppPrincipal p) {
+        return cleanupService.cleanup(p.id());
+    }
 }
