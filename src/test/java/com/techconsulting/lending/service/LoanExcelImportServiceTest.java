@@ -73,6 +73,45 @@ class LoanExcelImportServiceTest {
     }
 
     @Test
+    void excludesCancelledRowsBeforeFinancialValidation() throws Exception {
+        ImportBatchRepository batches = mock(ImportBatchRepository.class);
+        LoanReportStagingRepository staging = mock(LoanReportStagingRepository.class);
+        ManualLendingRepository loans = mock(ManualLendingRepository.class);
+        LoanCalculationService calculations = mock(LoanCalculationService.class);
+        BorrowerNameResolver borrowerNames = mock(BorrowerNameResolver.class);
+        UserRepository users = mock(UserRepository.class);
+        User user = new User();
+        user.setLenderId("IAKI7TL1UT6K");
+
+        when(users.findById(7L)).thenReturn(Optional.of(user));
+        when(batches.findByUserIdAndReportTypeAndFileChecksum(any(), any(), any()))
+                .thenReturn(Optional.empty());
+        when(batches.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        LoanExcelImportService service = new LoanExcelImportService(
+                batches, staging, loans, calculations, borrowerNames, users, new ObjectMapper());
+
+        ImportBatch result = service.upload(7L, new MockMultipartFile(
+                "file", "MANUAL_LENDING_REPORT_IAKI7TL1UT6K_cancelled.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                reportBytes("CANCELLED", 0, 0)));
+
+        assertThat(result.getStatus()).isEqualTo(ImportBatch.Status.COMPLETED);
+        assertThat(result.getTotalRows()).isOne();
+        assertThat(result.getSkippedRows()).isOne();
+        assertThat(result.getInvalidRows()).isZero();
+        assertThat(result.getInsertedRows()).isZero();
+        assertThat(result.getUpdatedRows()).isZero();
+
+        ArgumentCaptor<LoanReportStaging> staged = ArgumentCaptor.forClass(LoanReportStaging.class);
+        verify(staging).save(staged.capture());
+        assertThat(staged.getValue().getValidationStatus()).isEqualTo("EXCLUDED");
+        assertThat(staged.getValue().getProcessingStatus()).isEqualTo("SKIPPED");
+        assertThat(staged.getValue().getLoanStatus()).isEqualTo("CANCELLED");
+        verifyNoInteractions(calculations, borrowerNames, loans);
+    }
+
+    @Test
     void rejectsReportOwnedByAnotherLenderBeforeCreatingBatch() throws Exception {
         ImportBatchRepository batches = mock(ImportBatchRepository.class);
         UserRepository users = mock(UserRepository.class);
@@ -94,6 +133,10 @@ class LoanExcelImportServiceTest {
     }
 
     private byte[] reportBytes() throws Exception {
+        return reportBytes("ACTIVE", 500, 4);
+    }
+
+    private byte[] reportBytes(String status, double disbursedAmount, double tenure) throws Exception {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             var sheet = workbook.createSheet("Sheet");
             sheet.createRow(0).createCell(0).setCellValue("Innofin Solutions Private Limited");
@@ -106,8 +149,8 @@ class LoanExcelImportServiceTest {
                     "DPD (days past due)", "Interest Rate (%)", "Tenure (months)", "LenDenClub Score"};
             var header = sheet.createRow(19);
             for (int i = 0; i < headers.length; i++) header.createCell(i).setCellValue(headers[i]);
-            Object[] values = {"50397065657571", "LOA-KLBUNNZP", "10/08/2026", 500, "Monthly",
-                    "01/09/2026", 557.25, 135.55, 125, 10.55, 3.76, 0, 0, "ACTIVE", "", 0, 36.48, 4, 800};
+            Object[] values = {"50397065657571", "LOA-KLBUNNZP", "10/08/2026", disbursedAmount, "Monthly",
+                    "01/09/2026", 557.25, 135.55, 125, 10.55, 3.76, 0, 0, status, "", 0, 36.48, tenure, 800};
             var data = sheet.createRow(20);
             for (int i = 0; i < values.length; i++) {
                 if (values[i] instanceof Number number) data.createCell(i).setCellValue(number.doubleValue());
