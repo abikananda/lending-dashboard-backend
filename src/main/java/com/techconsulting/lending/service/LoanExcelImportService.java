@@ -120,6 +120,14 @@ public class LoanExcelImportService {
                 Map<String, String> raw = rawRow(row, table.headers());
                 staged.setRawRowJson(json.writeValueAsString(raw));
                 try {
+                    if (isCancelled(raw)) {
+                        staged.setLoanStatus(get(raw, "loanstatus", "status"));
+                        staged.setValidationStatus("EXCLUDED");
+                        staged.setProcessingStatus("SKIPPED");
+                        staging.save(staged);
+                        batch.setSkippedRows(batch.getSkippedRows() + 1);
+                        continue;
+                    }
                     map(raw, staged);
                     List<String> errors = validate(staged);
                     staged.setValidationStatus(errors.isEmpty() ? "VALID" : "INVALID");
@@ -179,6 +187,11 @@ public class LoanExcelImportService {
         }
         throw new IllegalArgumentException("Could not find the manual-lending table. Expected Loan ID, "
                 + "Disbursed Amount, Tenure, Total Amount Received, Disbursement Date and Loan Status columns.");
+    }
+
+    private boolean isCancelled(Map<String, String> raw) {
+        String status = get(raw, "loanstatus", "status");
+        return "CANCELLED".equalsIgnoreCase(status) || "CANCELED".equalsIgnoreCase(status);
     }
 
     private void map(Map<String, String> raw, LoanReportStaging staged) {
