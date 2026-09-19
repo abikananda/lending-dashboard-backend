@@ -18,6 +18,12 @@ public class RepaymentEmailParser {
     private static final Pattern LDC_AMOUNTS = Pattern.compile(
             "(?is)MANUAL\\s+LENDING.*?₹\\s*" + AMOUNT + ".*?₹\\s*" + AMOUNT + ".*?₹\\s*" + AMOUNT);
     private static final Pattern SUBJECT_AMOUNT = Pattern.compile("(?i)Repayment\\s+of\\s+₹\\s*" + AMOUNT);
+    private static final Pattern LENDENCLUB_SUBJECT = Pattern.compile("(?i)^\\s*Repayment\\s+of\\s+₹\\s*"
+            + AMOUNT + "\\s+has\\s+been\\s+processed\\s+to\\s+your\\s+bank\\s+account\\s+X*\\d{4}\\s*$");
+    private static final Pattern JANA_SUBJECT = Pattern.compile(
+            "(?i)^\\s*Transaction\\s+Alert\\s+for\\s+your\\s+Jana\\s+Bank\\s+Account\\s*$");
+    private static final Pattern SLICE_SUBJECT = Pattern.compile(
+            "(?i)^\\s*Received\\s+₹\\s*" + AMOUNT + "\\s+via\\s+IMPS\\s*$");
     private static final Pattern LDC_DATE = Pattern.compile(
             "(?i)(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\\.?\\s+(\\d{1,2}),\\s+(\\d{4})");
     private static final Pattern ACCOUNT = Pattern.compile("(?i)(?:ending\\s+with|A/c\\s+no\\.)\\s*X*(\\d{4})");
@@ -39,9 +45,22 @@ public class RepaymentEmailParser {
 
     public Optional<ParsedEmail> parse(EmailMessageData email) {
         String sender = email.sender() == null ? "" : email.sender().trim();
+        if (!matchesExpectedSubject(sender, email.subject(), properties)) return Optional.empty();
         if (sender.equalsIgnoreCase(properties.getLendenclubSender())) return Optional.of(parseLendenclub(email));
         if (properties.isBankSender(sender)) return Optional.of(parseBank(email));
         return Optional.empty();
+    }
+
+    static boolean matchesExpectedSubject(String sender, String subject,
+                                          EmailReconciliationProperties properties) {
+        if (sender == null || subject == null) return false;
+        if (sender.trim().equalsIgnoreCase(properties.getLendenclubSender()))
+            return LENDENCLUB_SUBJECT.matcher(subject).matches();
+        if (sender.trim().equalsIgnoreCase("noreply@jana.bank.in") && properties.isBankSender(sender.trim()))
+            return JANA_SUBJECT.matcher(subject).matches();
+        if (sender.trim().equalsIgnoreCase("noreply@slice.bank.in") && properties.isBankSender(sender.trim()))
+            return SLICE_SUBJECT.matcher(subject).matches();
+        return false;
     }
 
     private ParsedEmail parseLendenclub(EmailMessageData email) {
