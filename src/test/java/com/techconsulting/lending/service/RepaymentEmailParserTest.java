@@ -24,7 +24,8 @@ class RepaymentEmailParserTest {
                 Total ₹0.81 ₹0.00 ₹0.81
                 """;
         var result = parser.parse(new EmailMessageData("m1", "noreply@lendenclub.com",
-                "Repayment of ₹0.81 has been processed", Instant.now(), body)).orElseThrow();
+                "Repayment of ₹0.81 has been processed to your bank account XXXXXXXXXXXX6643",
+                Instant.now(), body)).orElseThrow();
 
         assertThat(result.type()).isEqualTo("LENDENCLUB_REPAYMENT");
         assertThat(result.date()).isEqualTo(LocalDate.of(2026, 9, 13));
@@ -77,10 +78,29 @@ class RepaymentEmailParserTest {
                 Sept. 13, 2026 MANUAL LENDING ₹0.70 ₹0.20 ₹0.81
                 """;
         var result = parser.parse(new EmailMessageData("m3", "noreply@lendenclub.com",
-                "Repayment of ₹0.81 has been processed", Instant.now(), body)).orElseThrow();
+                "Repayment of ₹0.81 has been processed to your bank account XXXXXXXXXXXX6643",
+                Instant.now(), body)).orElseThrow();
 
         assertThat(result.validationStatus()).isEqualTo("INVALID");
         assertThat(result.validationError()).contains("does not equal total");
+    }
+
+    @Test
+    void ignoresOtherEmailsFromKnownSenders() {
+        assertThat(parser.parse(new EmailMessageData("m5", "noreply@lendenclub.com",
+                "Your monthly statement is ready", Instant.now(), "Repayment of ₹100.00"))).isEmpty();
+        assertThat(parser.parse(new EmailMessageData("m6", "noreply@jana.bank.in",
+                "Your account statement", Instant.now(), "credited with INR 100.00"))).isEmpty();
+        assertThat(parser.parse(new EmailMessageData("m7", "noreply@slice.bank.in",
+                "Payment reminder", Instant.now(), "received ₹100.00"))).isEmpty();
+    }
+
+    @Test
+    void requiresTheCompleteExpectedSubjectFormat() {
+        assertThat(parser.parse(new EmailMessageData("m8", "noreply@lendenclub.com",
+                "Repayment of ₹0.81 has been processed", Instant.now(), "irrelevant"))).isEmpty();
+        assertThat(parser.parse(new EmailMessageData("m9", "noreply@slice.bank.in",
+                "Received ₹1,612.41", Instant.now(), "irrelevant"))).isEmpty();
     }
 
     private EmailReconciliationProperties properties() {
