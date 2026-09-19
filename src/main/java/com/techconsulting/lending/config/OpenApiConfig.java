@@ -22,7 +22,4 @@ import org.springframework.context.annotation.Configuration;
         description = "Enter the JWT returned by /api/v1/auth/login. Swagger adds the Bearer prefix automatically.")
 public class OpenApiConfig {
     public static final String BEARER_AUTH = "bearerAuth";
-
-    private OpenApiConfig() {
-    }
 }
