@@ -21,8 +21,8 @@ class OpenApiConfigTest {
         assertThat(scheme.type()).isEqualTo(SecuritySchemeType.HTTP);
         assertThat(scheme.scheme()).isEqualTo("bearer");
         assertThat(scheme.bearerFormat()).isEqualTo("JWT");
-        assertThat(definition.security()).extracting("name")
-                .containsExactly(OpenApiConfig.BEARER_AUTH);
+        assertThat(definition.security()).hasSize(1);
+        assertThat(definition.security()[0].name()).isEqualTo(OpenApiConfig.BEARER_AUTH);
         assertThat(AuthController.class.getAnnotation(SecurityRequirements.class)).isNotNull();
     }
 }
