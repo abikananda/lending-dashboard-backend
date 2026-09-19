@@ -9,6 +9,7 @@ import jakarta.mail.search.ReceivedDateTerm;
 import jakarta.mail.search.FromStringTerm;
 import jakarta.mail.search.ComparisonTerm;
 import jakarta.mail.search.SearchTerm;
+import jakarta.mail.search.SubjectTerm;
 import org.jsoup.Jsoup;
 import org.springframework.stereotype.Component;
 
@@ -58,18 +59,22 @@ public class GmailImapClient {
             try {
                 folder.open(Folder.READ_ONLY);
                 Date since = Date.from(Instant.now().minus(Math.max(1, properties.getLookbackDays()), ChronoUnit.DAYS));
-                List<SearchTerm> senderTerms = new ArrayList<>();
-                senderTerms.add(new FromStringTerm(properties.getLendenclubSender()));
-                bankSenders.stream().map(FromStringTerm::new).forEach(senderTerms::add);
-                var sender = new OrTerm(senderTerms.toArray(SearchTerm[]::new));
+                List<SearchTerm> expectedMessages = new ArrayList<>();
+                expectedMessages.add(senderAndSubject(properties.getLendenclubSender(), "Repayment of"));
+                bankSenders.stream().map(this::bankSenderAndSubject)
+                        .filter(Objects::nonNull).forEach(expectedMessages::add);
+                var senderAndSubject = new OrTerm(expectedMessages.toArray(SearchTerm[]::new));
                 Message[] messages = folder.search(new AndTerm(
-                        new ReceivedDateTerm(ComparisonTerm.GE, since), sender));
+                        new ReceivedDateTerm(ComparisonTerm.GE, since), senderAndSubject));
                 for (Message message : messages) {
+                    String sender = address(message.getFrom());
+                    String subject = Objects.toString(message.getSubject(), "");
+                    if (!RepaymentEmailParser.matchesExpectedSubject(sender, subject, properties)) continue;
                     String body = body(message);
                     Date received = Optional.ofNullable(message.getReceivedDate())
                             .orElse(Optional.ofNullable(message.getSentDate()).orElse(new Date()));
-                    result.add(new EmailMessageData(messageId(message, body), address(message.getFrom()),
-                            Objects.toString(message.getSubject(), ""), received.toInstant(), body));
+                    result.add(new EmailMessageData(messageId(message, body), sender,
+                            subject, received.toInstant(), body));
                 }
             } finally {
                 if (folder.isOpen()) folder.close(false);
@@ -78,6 +83,19 @@ public class GmailImapClient {
             throw new IllegalStateException("Unable to read repayment emails from Gmail", ex);
         }
         return result;
+    }
+
+    private SearchTerm bankSenderAndSubject(String sender) {
+        if (sender == null) return null;
+        if (sender.equalsIgnoreCase("noreply@jana.bank.in"))
+            return senderAndSubject(sender, "Transaction Alert for your Jana Bank Account");
+        if (sender.equalsIgnoreCase("noreply@slice.bank.in"))
+            return senderAndSubject(sender, "Received");
+        return null;
+    }
+
+    private SearchTerm senderAndSubject(String sender, String subject) {
+        return new AndTerm(new FromStringTerm(sender), new SubjectTerm(subject));
     }
 
     private String body(Part part) throws Exception {
