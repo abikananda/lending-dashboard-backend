@@ -21,6 +21,7 @@ public class EmailReconciliationService {
     private final PaymentNotificationRepository notifications;
     private final BankCreditRepository bankCredits;
     private final ReconciliationRecordRepository reconciliations;
+    private final LumpsumRepaymentRepository lumpsumRepayments;
     private final UserRepository users;
     private final EmailReconciliationAccountRepository accounts;
     private final EmailCredentialCipher credentialCipher;
@@ -31,11 +32,13 @@ public class EmailReconciliationService {
                                       PaymentNotificationRepository notifications,
                                       BankCreditRepository bankCredits,
                                       ReconciliationRecordRepository reconciliations,
+                                      LumpsumRepaymentRepository lumpsumRepayments,
                                       UserRepository users, EmailReconciliationAccountRepository accounts,
                                       EmailCredentialCipher credentialCipher,
                                       EmailReconciliationProperties properties) {
         this.gmail = gmail; this.parser = parser; this.notifications = notifications;
         this.bankCredits = bankCredits; this.reconciliations = reconciliations;
+        this.lumpsumRepayments = lumpsumRepayments;
         this.users = users; this.accounts = accounts; this.credentialCipher = credentialCipher;
         this.properties = properties;
     }
@@ -102,6 +105,8 @@ public class EmailReconciliationService {
             Optional<PaymentNotification> existing = notifications.findByUserIdAndEmailMessageId(
                     userId, truncate(email.messageId(), 255));
             if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
+                parser.parse(email).filter(value -> value.lumpsumTotal() != null)
+                        .ifPresent(value -> saveLumpsum(userId, account, existing.orElseThrow(), value));
                 duplicates++;
                 continue;
             }
@@ -115,6 +120,7 @@ public class EmailReconciliationService {
                         existing.orElseGet(PaymentNotification::new));
                 notification.setReconciliationAccountId(account == null ? null : account.getId());
                 notification = notifications.save(notification);
+                if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId, account, notification, parsed.get());
                 if ("BANK_CREDIT".equals(parsed.get().type())) saveBankCredit(userId, notification, parsed.get());
                 imported++;
             } catch (RuntimeException ex) {
@@ -180,6 +186,20 @@ public class EmailReconciliationService {
         });
     }
 
+    private void saveLumpsum(Long userId, EmailReconciliationAccount account,
+                             PaymentNotification notification, RepaymentEmailParser.ParsedEmail parsed) {
+        LumpsumRepayment value = lumpsumRepayments.findByPaymentNotificationId(notification.getId())
+                .orElseGet(LumpsumRepayment::new);
+        value.setUserId(userId);
+        value.setReconciliationAccountId(account == null ? null : account.getId());
+        value.setPaymentNotificationId(notification.getId());
+        value.setProcessingDate(parsed.date());
+        value.setPrincipalAmount(parsed.lumpsumPrincipal());
+        value.setInterestAmount(parsed.lumpsumInterest());
+        value.setTotalAmount(parsed.lumpsumTotal());
+        lumpsumRepayments.save(value);
+    }
+
     private int reconcile(Long userId, Long accountId) {
         LocalDate today = LocalDate.now(clock);
         LocalDate from = today.minusDays(Math.max(1, properties.getLookbackDays()));
@@ -206,17 +226,22 @@ public class EmailReconciliationService {
             if (record.isManuallyResolved()) continue;
             record.setUserId(userId); record.setPaymentNotificationId(repayment.getId());
             record.setReconciliationDate(repayment.getNotificationDate());
-            record.setLenderReportedAmount(repayment.getReportedAmount());
+            Optional<LumpsumRepayment> lumpsum = lumpsumRepayments.findByPaymentNotificationId(repayment.getId());
+            BigDecimal expectedBankCredit = repayment.getReportedAmount().add(
+                    lumpsum.map(LumpsumRepayment::getTotalAmount).orElse(BigDecimal.ZERO));
+            record.setLenderReportedAmount(expectedBankCredit);
             usedBankNotifications.remove(record.getBankPaymentNotificationId());
             LocalDate due = addBusinessDays(repayment.getNotificationDate(), 5);
-            Optional<PaymentNotification> match = bank.stream().filter(value -> "PARSED".equals(value.getParsingStatus()))
+            List<PaymentNotification> eligibleBankCredits = bank.stream()
+                    .filter(value -> "PARSED".equals(value.getParsingStatus()))
                     .filter(value -> !usedBankNotifications.contains(value.getId()))
                     .filter(value -> !value.getNotificationDate().isBefore(repayment.getNotificationDate()))
                     .filter(value -> !value.getNotificationDate().isAfter(due))
-                    .filter(value -> accountMatches(repayment, value))
-                    .filter(value -> value.getReportedAmount().compareTo(repayment.getReportedAmount()) == 0)
+                    .filter(value -> accountMatches(repayment, value)).toList();
+            Optional<PaymentNotification> match = eligibleBankCredits.stream()
+                    .filter(value -> value.getReportedAmount().compareTo(expectedBankCredit) == 0)
                     .findFirst();
-            applyStatus(record, repayment, match, bank, due, today, userId);
+            applyStatus(record, repayment, match, bank, due, today, userId, expectedBankCredit);
             match.ifPresent(value -> usedBankNotifications.add(value.getId()));
             reconciliations.save(record); updated++;
         }
@@ -225,7 +250,7 @@ public class EmailReconciliationService {
 
     private void applyStatus(ReconciliationRecord record, PaymentNotification repayment,
                              Optional<PaymentNotification> match, List<PaymentNotification> bank,
-                             LocalDate due, LocalDate today, Long userId) {
+                             LocalDate due, LocalDate today, Long userId, BigDecimal expectedBankCredit) {
         if (!"VALID".equals(repayment.getAmountValidationStatus())) {
             record.setBankPaymentNotificationId(null); record.setBankCreditId(null);
             record.setStatus("INVALID_EMI_BREAKDOWN"); record.setReason(repayment.getParsingError());
@@ -236,7 +261,7 @@ public class EmailReconciliationService {
             record.setBankPaymentNotificationId(bankMail.getId());
             record.setStatus("MATCHED"); record.setReason("LenDenClub repayment matched bank credit");
             record.setBankCreditedAmount(bankMail.getReportedAmount());
-            record.setDifferenceAmount(bankMail.getReportedAmount().subtract(repayment.getReportedAmount()));
+            record.setDifferenceAmount(bankMail.getReportedAmount().subtract(expectedBankCredit));
             if (bankMail.getTransactionReference() != null) bankCredits
                     .findFirstByUserIdAndBankTransactionReferenceIgnoreCase(userId, bankMail.getTransactionReference())
                     .ifPresent(value -> record.setBankCreditId(value.getId()));
@@ -245,7 +270,7 @@ public class EmailReconciliationService {
         record.setBankCreditedAmount(BigDecimal.ZERO);
         record.setBankPaymentNotificationId(null);
         record.setBankCreditId(null);
-        record.setDifferenceAmount(repayment.getReportedAmount().negate());
+        record.setDifferenceAmount(expectedBankCredit.negate());
         if (!today.isAfter(due)) {
             record.setStatus("PENDING_BANK_CREDIT"); record.setReason("Bank credit expected by " + due);
         } else {
