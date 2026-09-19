@@ -32,7 +32,9 @@ public class RepaymentEmailParser {
             "(?i)(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\\.?\\s+(\\d{1,2}),\\s+(\\d{4})");
     private static final Pattern ACCOUNT = Pattern.compile("(?i)(?:ending\\s+with|A/c\\s+no\\.)\\s*X*(\\d{4})");
     private static final Pattern JANA_BANK = Pattern.compile("(?is)A/c\\s+no\\.\\s*X*(\\d{4})\\s+is\\s+credited\\s+with\\s+INR\\s+"
-            + AMOUNT + "\\s+on\\s+(\\d{1,2}-[A-Z]{3}-\\d{4})\\.\\s*Info:\\s*([^\\r\\n]+)");
+            + AMOUNT + "\\s+on\\s+(\\d{1,2}-[A-Z]{3}-\\d{4})\\.\\s*Info:\\s*"
+            + "(IMPS\\s+\\d+\\s+INNOFIN)\\b");
+    private static final Pattern JANA_CREDIT = Pattern.compile("(?i)\\bis\\s+credited\\s+with\\s+INR\\b");
     private static final Pattern SLICE_BANK = Pattern.compile("(?is)(?:received\\s+)?₹\\s*" + AMOUNT
             + "\\s+via\\s+IMPS\\s+in\\s+your\\s+slice\\s+bank\\s+a/c\\s+x*(\\d{4}).*?"
             + "Transaction\\s+Date\\s+(\\d{1,2}-[A-Z]{3}-\\d{2,4})");
@@ -118,7 +120,10 @@ public class RepaymentEmailParser {
                     null, null, null, slice.group(2), null, "VALID", null, null, null, null, null);
         }
         Matcher bank = JANA_BANK.matcher(email.body());
-        if (!bank.find()) throw new IllegalArgumentException("Bank credit amount, date or reference was not found");
+        boolean matchingInnOfinCredit = bank.find();
+        if (!matchingInnOfinCredit && JANA_CREDIT.matcher(email.body()).find()) return null;
+        if (!matchingInnOfinCredit)
+            throw new IllegalArgumentException("Bank credit amount, date or INNOFIN reference was not found");
         return new ParsedEmail("BANK_CREDIT", LocalDate.parse(bank.group(3), BANK_DATE), amount(bank.group(2)),
                 null, null, null, bank.group(1), bank.group(4).trim(), "VALID", null, null, null, null, null);
     }
