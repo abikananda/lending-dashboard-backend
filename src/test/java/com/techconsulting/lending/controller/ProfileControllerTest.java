@@ -1,40 +1,41 @@
 package com.techconsulting.lending.controller;
 
+import com.techconsulting.lending.domain.LendingPortfolio;
 import com.techconsulting.lending.domain.User;
 import com.techconsulting.lending.repository.LendingPortfolioRepository;
 import com.techconsulting.lending.repository.UserRepository;
 import com.techconsulting.lending.security.JwtFilter.AppPrincipal;
-import com.techconsulting.lending.service.EmailCredentialCipher;
 import org.junit.jupiter.api.Test;
 
-import java.util.Base64;
+import java.math.BigDecimal;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ProfileControllerTest {
     @Test
-    void storesWriteOnlyEncryptedEmailAppPassword() {
+    void returnsProfileWithoutMailboxCredentials() {
         UserRepository users = mock(UserRepository.class);
+        LendingPortfolioRepository portfolios = mock(LendingPortfolioRepository.class);
         User user = new User();
         user.setId(7L);
+        user.setUsername("owner");
         user.setEmail("owner@gmail.com");
+        user.setLenderId("LENDER123");
+        LendingPortfolio portfolio = new LendingPortfolio();
+        portfolio.setInvestmentPrincipalAmount(new BigDecimal("500000"));
         when(users.findById(7L)).thenReturn(Optional.of(user));
-        EmailCredentialCipher cipher = new EmailCredentialCipher(
-                Base64.getEncoder().encodeToString(new byte[32]));
-        ProfileController controller = new ProfileController(users,
-                mock(LendingPortfolioRepository.class), cipher);
+        when(portfolios.findByUserId(7L)).thenReturn(Optional.of(portfolio));
+        ProfileController controller = new ProfileController(users, portfolios);
 
-        var response = controller.updateEmailCredentials(new AppPrincipal(7L, "owner"),
-                new ProfileController.EmailPasswordRequest("abcd efgh ijkl mnop"));
+        var response = controller.profile(new AppPrincipal(7L, "owner"));
 
+        assertThat(response.userId()).isEqualTo(7L);
+        assertThat(response.username()).isEqualTo("owner");
         assertThat(response.email()).isEqualTo("owner@gmail.com");
-        assertThat(response.credentialsConfigured()).isTrue();
-        assertThat(user.getEmailPassword()).isNotEqualTo("abcdefghijklmnop");
-        assertThat(cipher.decrypt(user.getEmailPassword())).isEqualTo("abcdefghijklmnop");
-        verify(users).save(user);
+        assertThat(response.lenderId()).isEqualTo("LENDER123");
+        assertThat(response.investmentPrincipal()).isEqualByComparingTo("500000");
     }
 }
