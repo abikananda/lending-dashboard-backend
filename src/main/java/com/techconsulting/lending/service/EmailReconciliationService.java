@@ -104,18 +104,21 @@ public class EmailReconciliationService {
         for (EmailMessageData email : emails) {
             Optional<PaymentNotification> existing = notifications.findByUserIdAndEmailMessageId(
                     userId, truncate(email.messageId(), 255));
-            if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
-                parser.parse(email).filter(value -> value.lumpsumTotal() != null)
-                        .ifPresent(value -> saveLumpsum(userId, account, existing.orElseThrow(), value));
-                duplicates++;
-                continue;
-            }
             try {
                 Optional<RepaymentEmailParser.ParsedEmail> parsed = parser.parse(email);
                 if (parsed.isEmpty()) continue;
-                if (account != null && parsed.get().accountLast4() != null
-                        && !account.getBankAccountLast4().equals(parsed.get().accountLast4()))
-                    throw new IllegalArgumentException("Email account ending does not match configured bank account");
+                validateAccount(account, parsed.get());
+                if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
+                    PaymentNotification duplicate = existing.orElseThrow();
+                    if (account != null && !Objects.equals(duplicate.getReconciliationAccountId(), account.getId())) {
+                        duplicate.setReconciliationAccountId(account.getId());
+                        duplicate = notifications.save(duplicate);
+                    }
+                    if (parsed.get().lumpsumTotal() != null)
+                        saveLumpsum(userId, account, duplicate, parsed.get());
+                    duplicates++;
+                    continue;
+                }
                 PaymentNotification notification = saveNotification(userId, email, parsed.get(),
                         existing.orElseGet(PaymentNotification::new));
                 notification.setReconciliationAccountId(account == null ? null : account.getId());
@@ -132,6 +135,13 @@ public class EmailReconciliationService {
         }
         int reconciled = reconcile(userId, account == null ? null : account.getId());
         return new SyncResult(imported, duplicates, parseFailures, reconciled);
+    }
+
+    private void validateAccount(EmailReconciliationAccount account,
+                                 RepaymentEmailParser.ParsedEmail parsed) {
+        if (account != null && parsed.accountLast4() != null
+                && !account.getBankAccountLast4().equals(parsed.accountLast4()))
+            throw new IllegalArgumentException("Email account ending does not match configured bank account");
     }
 
     public List<ReconciliationRecord> records(Long userId, LocalDate from, LocalDate to) {
