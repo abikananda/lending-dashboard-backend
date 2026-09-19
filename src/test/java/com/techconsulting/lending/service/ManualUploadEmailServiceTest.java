@@ -25,6 +25,26 @@ class ManualUploadEmailServiceTest {
         assertThat(body).contains("Dashboard statistics","Before","After","₹1,000.00","₹1,200.00");
         assertThat(body).contains("New borrowers moved to NPA: 1","Borrower A","L-1","S-1",
                 "₹80.00","REPORTED_AS_NPA");
+
+        String html=service.htmlBody(new ManualUploadNotification(12L,"report.xlsx","user@example.com",
+                before,after,List.of(npa)));
+        assertThat(html).contains("<html>","Report upload completed","Dashboard statistics",
+                "<table","Metric","Before","After","Change");
+        assertThat(html).contains("New borrowers moved to NPA (1)","Borrower A","L-1",
+                "₹500.00","₹420.00","₹80.00","REPORTED_AS_NPA");
+        assertThat(html).contains("background:#16a34a","Healthy");
+    }
+
+    @Test
+    void htmlEmailShowsPositiveMessageWhenNoBorrowerMovesToNpaAndEscapesFilename() {
+        ManualUploadEmailService service=new ManualUploadEmailService(mock(JavaMailSender.class),false,"");
+        DashboardSummary summary=summary("1000","100","0",0);
+
+        String html=service.htmlBody(new ManualUploadNotification(13L,"report<script>.xlsx",
+                "user@example.com",summary,summary,List.of()));
+
+        assertThat(html).contains("No new borrowers moved to NPA in this upload.");
+        assertThat(html).contains("report&lt;script&gt;.xlsx").doesNotContain("report<script>.xlsx");
     }
 
     private DashboardSummary summary(String lent,String interest,String npa,long npaCount) {
