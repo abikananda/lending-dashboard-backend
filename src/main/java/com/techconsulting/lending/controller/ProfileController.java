@@ -4,6 +4,7 @@ import com.techconsulting.lending.domain.User;
 import com.techconsulting.lending.repository.UserRepository;
 import com.techconsulting.lending.repository.LendingPortfolioRepository;
 import com.techconsulting.lending.security.JwtFilter.AppPrincipal;
+import com.techconsulting.lending.service.EmailCredentialCipher;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -23,11 +24,14 @@ import java.math.BigDecimal;
 public class ProfileController {
     private final UserRepository users;
     private final LendingPortfolioRepository portfolios;
+    private final EmailCredentialCipher emailCredentialCipher;
 
     public record LenderIdRequest(@NotBlank @Pattern(regexp = "[A-Za-z0-9]+") String lenderId) { }
     public record LenderIdResponse(String lenderId) { }
     public record ProfileResponse(Long userId, String username, String email, String lenderId,
-                                  BigDecimal investmentPrincipal) { }
+                                  BigDecimal investmentPrincipal, boolean emailCredentialsConfigured) { }
+    public record EmailPasswordRequest(@NotBlank String emailPassword) { }
+    public record EmailCredentialsResponse(String email, boolean credentialsConfigured) { }
 
     @GetMapping
     ProfileResponse profile(@AuthenticationPrincipal AppPrincipal principal) {
@@ -36,7 +40,8 @@ public class ProfileController {
                 .map(portfolio -> portfolio.getInvestmentPrincipalAmount())
                 .orElse(BigDecimal.ZERO);
         return new ProfileResponse(user.getId(), user.getUsername(), user.getEmail(),
-                user.getLenderId(), principalAmount);
+                user.getLenderId(), principalAmount,
+                user.getEmailPassword() != null && !user.getEmailPassword().isBlank());
     }
 
     @PutMapping("/lender-id")
@@ -50,5 +55,16 @@ public class ProfileController {
         user.setLenderId(lenderId);
         users.save(user);
         return new LenderIdResponse(lenderId);
+    }
+
+    @PutMapping("/email-credentials")
+    EmailCredentialsResponse updateEmailCredentials(@AuthenticationPrincipal AppPrincipal principal,
+                                                     @Valid @RequestBody EmailPasswordRequest request) {
+        User user = users.findById(principal.id()).orElseThrow();
+        String appPassword = request.emailPassword().replace(" ", "");
+        if (appPassword.isBlank()) throw new IllegalArgumentException("Email app password is required");
+        user.setEmailPassword(emailCredentialCipher.encrypt(appPassword));
+        users.save(user);
+        return new EmailCredentialsResponse(user.getEmail(), true);
     }
 }
