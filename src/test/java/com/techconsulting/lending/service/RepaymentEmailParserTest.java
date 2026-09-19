@@ -76,6 +76,7 @@ class RepaymentEmailParserTest {
         String body = """
                 ending with XXXXXXXXXXXX6643 within 5 working days
                 Sept. 13, 2026 MANUAL LENDING ₹0.70 ₹0.20 ₹0.81
+                Total ₹0.70 ₹0.20 ₹0.81
                 """;
         var result = parser.parse(new EmailMessageData("m3", "noreply@lendenclub.com",
                 "Repayment of ₹0.81 has been processed to your bank account XXXXXXXXXXXX6643",
@@ -83,6 +84,60 @@ class RepaymentEmailParserTest {
 
         assertThat(result.validationStatus()).isEqualTo("INVALID");
         assertThat(result.validationError()).contains("does not equal total");
+    }
+
+    @Test
+    void parsesLumpsumAndKeepsManualRepaymentValuesSeparate() {
+        String body = """
+                We've processed your repayment of ₹5414.94. It will be credited to your bank account
+                ending with XXXXXXXXXXXX6643 within 5 working days. Here's the breakdown:
+                Processing Date Lending Type Principal Interest Total Amount
+                Sept. 19, 2026 LUMPSUM ₹240.71 ₹13.65 ₹254.36
+                Sept. 19, 2026 MANUAL LENDING ₹4767.98 ₹392.60 ₹5160.58
+                Total ₹5008.69 ₹406.25 ₹5414.94
+                """;
+
+        var result = parser.parse(new EmailMessageData("m10", "noreply@lendenclub.com",
+                "Repayment of ₹5414.94 has been processed to your bank account XXXXXXXXXXXX6643",
+                Instant.now(), body)).orElseThrow();
+
+        assertThat(result.total()).isEqualByComparingTo("5160.58");
+        assertThat(result.principal()).isEqualByComparingTo("4767.98");
+        assertThat(result.interest()).isEqualByComparingTo("392.60");
+        assertThat(result.lumpsumPrincipal()).isEqualByComparingTo("240.71");
+        assertThat(result.lumpsumInterest()).isEqualByComparingTo("13.65");
+        assertThat(result.lumpsumTotal()).isEqualByComparingTo("254.36");
+        assertThat(result.lenderReportedAmount()).isEqualByComparingTo("5414.94");
+        assertThat(result.validationStatus()).isEqualTo("VALID");
+    }
+
+    @Test
+    void flagsCombinedBodyTotalThatDoesNotMatchSubject() {
+        String body = """
+                ending with XXXXXXXXXXXX6643 within 5 working days
+                Sept. 19, 2026 LUMPSUM ₹240.71 ₹13.65 ₹254.36
+                Sept. 19, 2026 MANUAL LENDING ₹4767.98 ₹392.60 ₹5160.58
+                Total ₹5008.69 ₹406.25 ₹5414.94
+                """;
+
+        var result = parser.parse(new EmailMessageData("m11", "noreply@lendenclub.com",
+                "Repayment of ₹5415.94 has been processed to your bank account XXXXXXXXXXXX6643",
+                Instant.now(), body)).orElseThrow();
+
+        assertThat(result.validationStatus()).isEqualTo("INVALID");
+    }
+
+    @Test
+    void ignoresJanaDebitAlerts() {
+        String body = """
+                Dear Customer,
+                Your Jana Bank A/c no. XX6643 is debited with INR 15,000.00 on 16-SEP-2026.
+                Info: UPI/DR/129733177918/ABIKA.
+                Your account balance is INR 85,197.95.
+                """;
+
+        assertThat(parser.parse(new EmailMessageData("m12", "noreply@jana.bank.in",
+                "Transaction Alert for your Jana Bank Account", Instant.now(), body))).isEmpty();
     }
 
     @Test
