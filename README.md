@@ -88,16 +88,3 @@ DELETE /api/v1/profile/reconciliation-accounts/{id}
 The app password is write-only and encrypted with AES-256-GCM. Omit it during an update to retain
 the existing credential. Adding another account uses the same API; a new bank email layout requires
 a corresponding parser template.
-
-For a user's primary mailbox, save the Gmail app password once through the authenticated profile API:
-
-```http
-PUT /api/v1/profile/email-credentials
-Content-Type: application/json
-
-{"emailPassword":"your-google-app-password"}
-```
-
-The IMAP username comes from `users.email`. The password is encrypted before being stored in the
-`users.email_password` column and is never returned by the API. Dedicated reconciliation-account
-configuration continues to take precedence when the user has additional LenDenClub accounts.
