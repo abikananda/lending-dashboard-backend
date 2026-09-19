@@ -53,28 +53,18 @@ public class EmailReconciliationService {
     public synchronized SyncResult syncAllEnabled() {
         List<EmailReconciliationAccount> enabled = accounts.findByEnabledTrueOrderById();
         SyncResult total = new SyncResult(0, 0, 0, 0);
-        Set<Long> usersWithDedicatedAccounts = new HashSet<>();
-        boolean userMailboxAttempted = false;
         for (EmailReconciliationAccount account : enabled) {
-            usersWithDedicatedAccounts.add(account.getUserId());
             try { total = total.add(syncAccount(account)); }
             catch (RuntimeException ex) { log.error("Email reconciliation failed for account id={} label={}",
                     account.getId(), account.getLabel(), ex); }
         }
-        for (User user : users.findByEnabledTrueAndEmailPasswordIsNotNullOrderById()) {
-            if (usersWithDedicatedAccounts.contains(user.getId())) continue;
-            userMailboxAttempted = true;
-            try { total = total.add(syncUserMailbox(user)); }
-            catch (RuntimeException ex) { log.error("Email reconciliation failed for user id={}", user.getId(), ex); }
-        }
-        if (enabled.isEmpty() && !userMailboxAttempted
-                && properties.getUsername() != null && !properties.getUsername().isBlank())
+        if (enabled.isEmpty() && properties.getUsername() != null && !properties.getUsername().isBlank())
             return syncForConfiguredMailbox();
         return total;
     }
 
     public synchronized SyncResult sync(Long userId) {
-        users.findById(userId).orElseThrow();
+        User user = users.findById(userId).orElseThrow();
         List<EmailReconciliationAccount> configured = accounts.findByUserIdOrderById(userId).stream()
                 .filter(EmailReconciliationAccount::isEnabled).toList();
         if (!configured.isEmpty()) {
@@ -82,15 +72,8 @@ public class EmailReconciliationService {
             for (EmailReconciliationAccount account : configured) total = total.add(syncAccount(account));
             return total;
         }
-        User user = users.findById(userId).orElseThrow();
-        if (user.getEmailPassword() != null && !user.getEmailPassword().isBlank()) return syncUserMailbox(user);
         if (user.getEmail().equalsIgnoreCase(properties.getUsername())) return importEmails(userId, null, gmail.fetch());
-        throw new IllegalArgumentException("No email credentials or enabled reconciliation account is configured");
-    }
-
-    private SyncResult syncUserMailbox(User user) {
-        return importEmails(user.getId(), null, gmail.fetch(user.getEmail(),
-                credentialCipher.decrypt(user.getEmailPassword()), properties.getBankSenders()));
+        throw new IllegalArgumentException("No enabled email reconciliation account is configured");
     }
 
     private SyncResult syncAccount(EmailReconciliationAccount account) {
