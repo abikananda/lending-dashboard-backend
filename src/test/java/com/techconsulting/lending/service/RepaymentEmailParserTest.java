@@ -40,18 +40,18 @@ class RepaymentEmailParserTest {
     void parsesJanaBankCreditAlert() {
         String body = """
                 Dear Customer,
-                Your Jana Bank A/c no. XX6643 is credited with INR 48.08 on 12-SEP-2026.
-                Info: IMPS 625516639634 INNOFIN
+                Your Jana Bank A/c no. XX6643 is credited with INR 4,508.60 on 16-SEP-2026.
+                Info: IMPS 625918610771 INNOFIN
                 Your account balance is INR 97,720.68.
                 """;
         var result = parser.parse(new EmailMessageData("m2", "noreply@jana.bank.in",
                 "Transaction Alert for your Jana Bank Account", Instant.now(), body)).orElseThrow();
 
         assertThat(result.type()).isEqualTo("BANK_CREDIT");
-        assertThat(result.date()).isEqualTo(LocalDate.of(2026, 9, 12));
-        assertThat(result.total()).isEqualByComparingTo("48.08");
+        assertThat(result.date()).isEqualTo(LocalDate.of(2026, 9, 16));
+        assertThat(result.total()).isEqualByComparingTo("4508.60");
         assertThat(result.accountLast4()).isEqualTo("6643");
-        assertThat(result.reference()).isEqualTo("IMPS 625516639634 INNOFIN");
+        assertThat(result.reference()).isEqualTo("IMPS 625918610771 INNOFIN");
     }
 
     @Test
@@ -137,6 +137,17 @@ class RepaymentEmailParserTest {
                 """;
 
         assertThat(parser.parse(new EmailMessageData("m12", "noreply@jana.bank.in",
+                "Transaction Alert for your Jana Bank Account", Instant.now(), body))).isEmpty();
+    }
+
+    @Test
+    void ignoresJanaCreditsThatAreNotFromInnOfin() {
+        String body = """
+                Your Jana Bank A/c no. XX6643 is credited with INR 2,000.00 on 16-SEP-2026.
+                Info: IMPS 625918610772 OTHER PARTY
+                """;
+
+        assertThat(parser.parse(new EmailMessageData("m13", "noreply@jana.bank.in",
                 "Transaction Alert for your Jana Bank Account", Instant.now(), body))).isEmpty();
     }
 
