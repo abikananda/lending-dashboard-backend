@@ -32,12 +32,17 @@ public class GmailImapClient {
     }
 
     public List<EmailMessageData> fetch(String username, String appPassword, String bankSender) {
-        if (username == null || username.isBlank()) throw new IllegalArgumentException("Mailbox email is required");
-        if (appPassword == null || appPassword.isBlank()) throw new IllegalArgumentException("Gmail app password is required");
         return fetch(username, appPassword, List.of(bankSender));
     }
 
-    private List<EmailMessageData> fetch(String username, String appPassword, List<String> bankSenders) {
+    public List<EmailMessageData> fetch(String username, String appPassword, List<String> bankSenders) {
+        if (username == null || username.isBlank()) throw new IllegalArgumentException("Mailbox email is required");
+        if (appPassword == null || appPassword.isBlank()) throw new IllegalArgumentException("Gmail app password is required");
+        if (bankSenders == null || bankSenders.isEmpty()) throw new IllegalArgumentException("At least one bank sender is required");
+        return fetchMailbox(username, appPassword, bankSenders);
+    }
+
+    private List<EmailMessageData> fetchMailbox(String username, String appPassword, List<String> bankSenders) {
         Properties mail = new Properties();
         mail.put("mail.store.protocol", "imaps");
         mail.put("mail.imaps.host", properties.getHost());
