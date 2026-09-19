@@ -4,6 +4,7 @@ import com.techconsulting.lending.config.EmailReconciliationProperties;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
@@ -51,10 +52,13 @@ public class RepaymentEmailParser {
     }
 
     public Optional<ParsedEmail> parse(EmailMessageData email) {
-        String sender = email.sender() == null ? "" : email.sender().trim();
-        if (!matchesExpectedSubject(sender, email.subject(), properties)) return Optional.empty();
-        if (sender.equalsIgnoreCase(properties.getLendenclubSender())) return Optional.of(parseLendenclub(email));
-        if (properties.isBankSender(sender)) return Optional.ofNullable(parseBank(email));
+        EmailMessageData normalized = new EmailMessageData(email.messageId(), email.sender(),
+                normalize(email.subject()), email.receivedAt(), normalize(email.body()));
+        String sender = normalized.sender() == null ? "" : normalized.sender().trim();
+        if (!matchesExpectedSubject(sender, normalized.subject(), properties)) return Optional.empty();
+        if (sender.equalsIgnoreCase(properties.getLendenclubSender()))
+            return Optional.of(parseLendenclub(normalized));
+        if (properties.isBankSender(sender)) return Optional.ofNullable(parseBank(normalized));
         return Optional.empty();
     }
 
@@ -62,12 +66,20 @@ public class RepaymentEmailParser {
                                           EmailReconciliationProperties properties) {
         if (sender == null || subject == null) return false;
         if (sender.trim().equalsIgnoreCase(properties.getLendenclubSender()))
-            return LENDENCLUB_SUBJECT.matcher(subject).matches();
+            return LENDENCLUB_SUBJECT.matcher(normalize(subject)).matches();
         if (sender.trim().equalsIgnoreCase("noreply@jana.bank.in") && properties.isBankSender(sender.trim()))
-            return JANA_SUBJECT.matcher(subject).matches();
+            return JANA_SUBJECT.matcher(normalize(subject)).matches();
         if (sender.trim().equalsIgnoreCase("noreply@slice.bank.in") && properties.isBankSender(sender.trim()))
-            return SLICE_SUBJECT.matcher(subject).matches();
+            return SLICE_SUBJECT.matcher(normalize(subject)).matches();
         return false;
+    }
+
+    static String normalize(String value) {
+        if (value == null) return "";
+        return Normalizer.normalize(value, Normalizer.Form.NFKC)
+                .replaceAll("\\p{Cf}", "")
+                .replace('\u00A0', ' ')
+                .replace('\u202F', ' ');
     }
 
     private ParsedEmail parseLendenclub(EmailMessageData email) {
