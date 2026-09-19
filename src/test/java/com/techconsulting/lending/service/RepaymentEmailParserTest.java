@@ -83,7 +83,7 @@ class RepaymentEmailParserTest {
                 Instant.now(), body)).orElseThrow();
 
         assertThat(result.validationStatus()).isEqualTo("INVALID");
-        assertThat(result.validationError()).contains("does not equal total");
+        assertThat(result.validationError()).contains("does not equal LenDenClub total");
     }
 
     @Test
