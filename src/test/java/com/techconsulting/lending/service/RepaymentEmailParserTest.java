@@ -72,6 +72,23 @@ class RepaymentEmailParserTest {
     }
 
     @Test
+    void parsesSliceEmailContainingInvisibleUnicodeFormattingCharacters() {
+        String body = """
+                You have received ₹3,‌745.55 via IMPS in your slice bank a/c xx3003!
+                Transaction Date 19-Sep-26
+                Sender Name INNOFINSOLUTIONSPRIVATELIMITED
+                IMPS Ref No. 626220618806
+                """;
+
+        var result = parser.parse(new EmailMessageData("m-unicode", "noreply@slice.bank.in",
+                "Received ₹3,‌745.55 via IMPS", Instant.now(), body)).orElseThrow();
+
+        assertThat(result.total()).isEqualByComparingTo("3745.55");
+        assertThat(result.accountLast4()).isEqualTo("3003");
+        assertThat(result.date()).isEqualTo(LocalDate.of(2026, 9, 19));
+    }
+
+    @Test
     void flagsIncorrectPrincipalAndInterestBreakdown() {
         String body = """
                 ending with XXXXXXXXXXXX6643 within 5 working days
