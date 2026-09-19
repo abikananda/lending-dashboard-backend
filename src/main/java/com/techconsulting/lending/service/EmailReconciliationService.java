@@ -197,10 +197,6 @@ public class EmailReconciliationService {
         value.setPrincipalAmount(parsed.lumpsumPrincipal());
         value.setInterestAmount(parsed.lumpsumInterest());
         value.setTotalAmount(parsed.lumpsumTotal());
-        value.setLenderReportedAmount(parsed.lenderReportedAmount());
-        value.setSubjectValidationStatus(parsed.validationStatus());
-        value.setBankValidationStatus("PENDING_BANK_CREDIT");
-        value.setValidationError(parsed.validationError());
         lumpsumRepayments.save(value);
     }
 
@@ -231,8 +227,8 @@ public class EmailReconciliationService {
             record.setUserId(userId); record.setPaymentNotificationId(repayment.getId());
             record.setReconciliationDate(repayment.getNotificationDate());
             Optional<LumpsumRepayment> lumpsum = lumpsumRepayments.findByPaymentNotificationId(repayment.getId());
-            BigDecimal expectedBankCredit = lumpsum.map(LumpsumRepayment::getLenderReportedAmount)
-                    .orElse(repayment.getReportedAmount());
+            BigDecimal expectedBankCredit = repayment.getReportedAmount().add(
+                    lumpsum.map(LumpsumRepayment::getTotalAmount).orElse(BigDecimal.ZERO));
             record.setLenderReportedAmount(expectedBankCredit);
             usedBankNotifications.remove(record.getBankPaymentNotificationId());
             LocalDate due = addBusinessDays(repayment.getNotificationDate(), 5);
@@ -245,11 +241,7 @@ public class EmailReconciliationService {
             Optional<PaymentNotification> match = eligibleBankCredits.stream()
                     .filter(value -> value.getReportedAmount().compareTo(expectedBankCredit) == 0)
                     .findFirst();
-            Optional<PaymentNotification> bankCandidate = match.or(eligibleBankCredits.stream()::findFirst);
             applyStatus(record, repayment, match, bank, due, today, userId, expectedBankCredit);
-            updateLumpsumBankValidation(lumpsum,
-                    match.isPresent() || !"AMOUNT_MISMATCH".equals(record.getStatus()) ? match : bankCandidate,
-                    record);
             match.ifPresent(value -> usedBankNotifications.add(value.getId()));
             reconciliations.save(record); updated++;
         }
@@ -289,20 +281,6 @@ public class EmailReconciliationService {
             record.setReason(otherAmount ? "Bank credit found in the payout window but amount differs"
                     : "No matching bank credit within five working days");
         }
-    }
-
-    private void updateLumpsumBankValidation(Optional<LumpsumRepayment> optional,
-                                             Optional<PaymentNotification> bankMail,
-                                             ReconciliationRecord record) {
-        optional.ifPresent(value -> {
-            value.setBankPaymentNotificationId(bankMail.map(PaymentNotification::getId).orElse(null));
-            value.setBankCreditAmount(bankMail.map(PaymentNotification::getReportedAmount).orElse(null));
-            value.setDifferenceAmount(bankMail.map(bank -> bank.getReportedAmount()
-                    .subtract(value.getLenderReportedAmount())).orElse(null));
-            value.setBankValidationStatus(record.getStatus());
-            value.setValidationError("MATCHED".equals(record.getStatus()) ? null : record.getReason());
-            lumpsumRepayments.save(value);
-        });
     }
 
     private boolean accountMatches(PaymentNotification left, PaymentNotification right) {
