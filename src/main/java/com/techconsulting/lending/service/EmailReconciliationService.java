@@ -87,19 +87,18 @@ public class EmailReconciliationService {
         for (EmailMessageData email : emails) {
             Optional<PaymentNotification> existing = notifications.findByUserIdAndEmailMessageId(
                     userId, truncate(email.messageId(), 255));
-            if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
-                parser.parse(email).filter(value -> value.lumpsumTotal() != null)
-                        .ifPresent(value -> saveLumpsum(userId, account == null ? null : account.getId(),
-                                existing.orElseThrow(), value));
-                duplicates++;
-                continue;
-            }
             try {
                 Optional<RepaymentEmailParser.ParsedEmail> parsed = parser.parse(email);
                 if (parsed.isEmpty()) continue;
-                if (account != null && parsed.get().accountLast4() != null
-                        && !account.getBankAccountLast4().equals(parsed.get().accountLast4()))
-                    throw new IllegalArgumentException("Email account ending does not match configured bank account");
+                validateAccount(account, parsed.get());
+                if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
+                    PaymentNotification duplicate = existing.orElseThrow();
+                    relinkNotificationToAccount(duplicate, account);
+                    if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId,
+                            account == null ? null : account.getId(), duplicate, parsed.get());
+                    duplicates++;
+                    continue;
+                }
                 PaymentNotification notification = saveNotification(userId, email, parsed.get(),
                         existing.orElseGet(PaymentNotification::new));
                 notification.setReconciliationAccountId(account == null ? null : account.getId());
@@ -115,8 +114,15 @@ public class EmailReconciliationService {
                 parseFailures++;
             }
         }
-        int reconciled = reconcile(userId, account == null ? null : account.getId());
+        int reconciled = reconcile(userId, account);
         return new SyncResult(imported, duplicates, parseFailures, reconciled);
+    }
+
+    private void validateAccount(EmailReconciliationAccount account,
+                                 RepaymentEmailParser.ParsedEmail parsed) {
+        if (account != null && parsed.accountLast4() != null
+                && !account.getBankAccountLast4().equals(parsed.accountLast4()))
+            throw new IllegalArgumentException("Email account ending does not match configured bank account");
     }
 
     public List<ReconciliationRecord> records(Long userId, LocalDate from, LocalDate to) {
@@ -188,7 +194,15 @@ public class EmailReconciliationService {
 
     Optional<LumpsumRepayment> findOrBackfillLumpsum(PaymentNotification notification) {
         Optional<LumpsumRepayment> existing = lumpsumRepayments.findByPaymentNotificationId(notification.getId());
-        if (existing.isPresent() || notification.getRawEmailText() == null) return existing;
+        if (existing.isPresent()) {
+            LumpsumRepayment value = existing.orElseThrow();
+            if (!Objects.equals(value.getReconciliationAccountId(), notification.getReconciliationAccountId())) {
+                value.setReconciliationAccountId(notification.getReconciliationAccountId());
+                value = lumpsumRepayments.save(value);
+            }
+            return Optional.of(value);
+        }
+        if (notification.getRawEmailText() == null) return Optional.empty();
         try {
             EmailMessageData storedEmail = new EmailMessageData(notification.getEmailMessageId(),
                     notification.getSender(), notification.getSubject(), notification.getEmailReceivedAt(),
@@ -204,7 +218,16 @@ public class EmailReconciliationService {
         }
     }
 
-    private int reconcile(Long userId, Long accountId) {
+    void relinkNotificationToAccount(PaymentNotification notification, EmailReconciliationAccount account) {
+        if (account == null || notification.getAccountLast4() == null
+                || !account.getBankAccountLast4().equals(notification.getAccountLast4())
+                || Objects.equals(notification.getReconciliationAccountId(), account.getId())) return;
+        notification.setReconciliationAccountId(account.getId());
+        notifications.save(notification);
+        findOrBackfillLumpsum(notification);
+    }
+
+    private int reconcile(Long userId, EmailReconciliationAccount account) {
         LocalDate today = LocalDate.now(clock);
         LocalDate from = today.minusDays(Math.max(1, properties.getLookbackDays()));
         List<PaymentNotification> lender = notifications
@@ -213,7 +236,10 @@ public class EmailReconciliationService {
         List<PaymentNotification> bank = notifications
                 .findByUserIdAndNotificationTypeAndNotificationDateBetweenOrderByNotificationDateDesc(
                         userId, "BANK_CREDIT", from, today.plusDays(7));
-        if (accountId != null) {
+        if (account != null) {
+            lender.forEach(value -> relinkNotificationToAccount(value, account));
+            bank.forEach(value -> relinkNotificationToAccount(value, account));
+            Long accountId = account.getId();
             lender = lender.stream().filter(value -> accountId.equals(value.getReconciliationAccountId())).toList();
             bank = bank.stream().filter(value -> accountId.equals(value.getReconciliationAccountId())).toList();
         }
