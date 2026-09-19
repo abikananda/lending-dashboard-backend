@@ -106,7 +106,8 @@ public class EmailReconciliationService {
                     userId, truncate(email.messageId(), 255));
             if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
                 parser.parse(email).filter(value -> value.lumpsumTotal() != null)
-                        .ifPresent(value -> saveLumpsum(userId, account, existing.orElseThrow(), value));
+                        .ifPresent(value -> saveLumpsum(userId, account == null ? null : account.getId(),
+                                existing.orElseThrow(), value));
                 duplicates++;
                 continue;
             }
@@ -120,7 +121,8 @@ public class EmailReconciliationService {
                         existing.orElseGet(PaymentNotification::new));
                 notification.setReconciliationAccountId(account == null ? null : account.getId());
                 notification = notifications.save(notification);
-                if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId, account, notification, parsed.get());
+                if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId,
+                        account == null ? null : account.getId(), notification, parsed.get());
                 if ("BANK_CREDIT".equals(parsed.get().type())) saveBankCredit(userId, notification, parsed.get());
                 imported++;
             } catch (RuntimeException ex) {
@@ -186,18 +188,37 @@ public class EmailReconciliationService {
         });
     }
 
-    private void saveLumpsum(Long userId, EmailReconciliationAccount account,
-                             PaymentNotification notification, RepaymentEmailParser.ParsedEmail parsed) {
+    private LumpsumRepayment saveLumpsum(Long userId, Long reconciliationAccountId,
+                                         PaymentNotification notification,
+                                         RepaymentEmailParser.ParsedEmail parsed) {
         LumpsumRepayment value = lumpsumRepayments.findByPaymentNotificationId(notification.getId())
                 .orElseGet(LumpsumRepayment::new);
         value.setUserId(userId);
-        value.setReconciliationAccountId(account == null ? null : account.getId());
+        value.setReconciliationAccountId(reconciliationAccountId);
         value.setPaymentNotificationId(notification.getId());
         value.setProcessingDate(parsed.date());
         value.setPrincipalAmount(parsed.lumpsumPrincipal());
         value.setInterestAmount(parsed.lumpsumInterest());
         value.setTotalAmount(parsed.lumpsumTotal());
-        lumpsumRepayments.save(value);
+        return lumpsumRepayments.save(value);
+    }
+
+    Optional<LumpsumRepayment> findOrBackfillLumpsum(PaymentNotification notification) {
+        Optional<LumpsumRepayment> existing = lumpsumRepayments.findByPaymentNotificationId(notification.getId());
+        if (existing.isPresent() || notification.getRawEmailText() == null) return existing;
+        try {
+            EmailMessageData storedEmail = new EmailMessageData(notification.getEmailMessageId(),
+                    notification.getSender(), notification.getSubject(), notification.getEmailReceivedAt(),
+                    notification.getRawEmailText());
+            return parser.parse(storedEmail)
+                    .filter(value -> value.lumpsumTotal() != null)
+                    .map(value -> saveLumpsum(notification.getUserId(),
+                            notification.getReconciliationAccountId(), notification, value));
+        } catch (RuntimeException ex) {
+            log.warn("Could not backfill lump-sum repayment from payment notification id={}",
+                    notification.getId(), ex);
+            return Optional.empty();
+        }
     }
 
     private int reconcile(Long userId, Long accountId) {
@@ -226,7 +247,7 @@ public class EmailReconciliationService {
             if (record.isManuallyResolved()) continue;
             record.setUserId(userId); record.setPaymentNotificationId(repayment.getId());
             record.setReconciliationDate(repayment.getNotificationDate());
-            Optional<LumpsumRepayment> lumpsum = lumpsumRepayments.findByPaymentNotificationId(repayment.getId());
+            Optional<LumpsumRepayment> lumpsum = findOrBackfillLumpsum(repayment);
             BigDecimal expectedBankCredit = repayment.getReportedAmount().add(
                     lumpsum.map(LumpsumRepayment::getTotalAmount).orElse(BigDecimal.ZERO));
             record.setLenderReportedAmount(expectedBankCredit);
