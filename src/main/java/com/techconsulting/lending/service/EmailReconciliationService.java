@@ -90,19 +90,25 @@ public class EmailReconciliationService {
             try {
                 Optional<RepaymentEmailParser.ParsedEmail> parsed = parser.parse(email);
                 if (parsed.isEmpty()) continue;
-                validateAccount(account, parsed.get());
+                if (!belongsToAccount(account, parsed.get())) {
+                    log.debug("Skipping email messageId={} because account ending {} does not match configured account {}",
+                            email.messageId(), parsed.get().accountLast4(), account.getBankAccountLast4());
+                    continue;
+                }
                 if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
                     PaymentNotification duplicate = existing.orElseThrow();
                     relinkNotificationToAccount(duplicate, account);
                     if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId,
                             account == null ? null : account.getId(), duplicate, parsed.get());
+                    if ("BANK_CREDIT".equals(parsed.get().type()))
+                        saveBankCredit(userId, duplicate, parsed.get());
                     duplicates++;
                     continue;
                 }
+                PaymentNotification target = existing.orElseGet(PaymentNotification::new);
+                target.setReconciliationAccountId(account == null ? null : account.getId());
                 PaymentNotification notification = saveNotification(userId, email, parsed.get(),
-                        existing.orElseGet(PaymentNotification::new));
-                notification.setReconciliationAccountId(account == null ? null : account.getId());
-                notification = notifications.save(notification);
+                        target);
                 if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId,
                         account == null ? null : account.getId(), notification, parsed.get());
                 if ("BANK_CREDIT".equals(parsed.get().type())) saveBankCredit(userId, notification, parsed.get());
@@ -129,11 +135,11 @@ public class EmailReconciliationService {
         }
     }
 
-    private void validateAccount(EmailReconciliationAccount account,
-                                 RepaymentEmailParser.ParsedEmail parsed) {
-        if (account != null && parsed.accountLast4() != null
-                && !account.getBankAccountLast4().equals(parsed.accountLast4()))
-            throw new IllegalArgumentException("Email account ending does not match configured bank account");
+    boolean belongsToAccount(EmailReconciliationAccount account,
+                             RepaymentEmailParser.ParsedEmail parsed) {
+        if (account == null) return true;
+        return parsed.accountLast4() != null
+                && Objects.equals(account.getBankAccountLast4(), parsed.accountLast4());
     }
 
     public List<ReconciliationRecord> records(Long userId, LocalDate from, LocalDate to) {
@@ -277,11 +283,11 @@ public class EmailReconciliationService {
                     .filter(value -> !usedBankNotifications.contains(value.getId()))
                     .filter(value -> !value.getNotificationDate().isBefore(repayment.getNotificationDate()))
                     .filter(value -> !value.getNotificationDate().isAfter(due))
-                    .filter(value -> accountMatches(repayment, value)).toList();
+                    .filter(value -> accountMatches(repayment, value, account != null)).toList();
             Optional<PaymentNotification> match = eligibleBankCredits.stream()
                     .filter(value -> value.getReportedAmount().compareTo(expectedBankCredit) == 0)
                     .findFirst();
-            applyStatus(record, repayment, match, bank, due, today, userId, expectedBankCredit);
+            applyStatus(record, repayment, match, eligibleBankCredits, due, today, userId, expectedBankCredit);
             match.ifPresent(value -> usedBankNotifications.add(value.getId()));
             reconciliations.save(record); updated++;
         }
@@ -289,12 +295,15 @@ public class EmailReconciliationService {
     }
 
     private void applyStatus(ReconciliationRecord record, PaymentNotification repayment,
-                             Optional<PaymentNotification> match, List<PaymentNotification> bank,
+                             Optional<PaymentNotification> match, List<PaymentNotification> eligibleBankCredits,
                              LocalDate due, LocalDate today, Long userId, BigDecimal expectedBankCredit) {
+        record.setBankPaymentNotificationId(null);
+        record.setBankCreditId(null);
+        record.setBankCreditedAmount(BigDecimal.ZERO);
+        record.setDifferenceAmount(BigDecimal.ZERO);
         if (!"VALID".equals(repayment.getAmountValidationStatus())) {
-            record.setBankPaymentNotificationId(null); record.setBankCreditId(null);
             record.setStatus("INVALID_EMI_BREAKDOWN"); record.setReason(repayment.getParsingError());
-            record.setDifferenceAmount(BigDecimal.ZERO); return;
+            return;
         }
         if (match.isPresent()) {
             PaymentNotification bankMail = match.get();
@@ -307,23 +316,20 @@ public class EmailReconciliationService {
                     .ifPresent(value -> record.setBankCreditId(value.getId()));
             return;
         }
-        record.setBankCreditedAmount(BigDecimal.ZERO);
-        record.setBankPaymentNotificationId(null);
-        record.setBankCreditId(null);
         record.setDifferenceAmount(expectedBankCredit.negate());
         if (!today.isAfter(due)) {
             record.setStatus("PENDING_BANK_CREDIT"); record.setReason("Bank credit expected by " + due);
         } else {
-            boolean otherAmount = bank.stream().anyMatch(value -> value.getNotificationDate() != null
-                    && !value.getNotificationDate().isBefore(repayment.getNotificationDate())
-                    && !value.getNotificationDate().isAfter(due) && accountMatches(repayment, value));
+            boolean otherAmount = !eligibleBankCredits.isEmpty();
             record.setStatus(otherAmount ? "AMOUNT_MISMATCH" : "BANK_CREDIT_MISSING");
             record.setReason(otherAmount ? "Bank credit found in the payout window but amount differs"
                     : "No matching bank credit within five working days");
         }
     }
 
-    private boolean accountMatches(PaymentNotification left, PaymentNotification right) {
+    private boolean accountMatches(PaymentNotification left, PaymentNotification right, boolean strict) {
+        if (strict)
+            return left.getAccountLast4() != null && left.getAccountLast4().equals(right.getAccountLast4());
         return left.getAccountLast4() == null || right.getAccountLast4() == null
                 || left.getAccountLast4().equals(right.getAccountLast4());
     }

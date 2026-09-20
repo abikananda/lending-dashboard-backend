@@ -10,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -24,6 +25,23 @@ class EmailReconciliationServiceTest {
     void calculatesFiveWorkingDayCreditDeadline() {
         assertThat(EmailReconciliationService.addBusinessDays(LocalDate.of(2026, 9, 11), 5))
                 .isEqualTo(LocalDate.of(2026, 9, 18));
+    }
+
+    @Test
+    void routesOnlyEmailsWithTheConfiguredBankAccountEnding() {
+        EmailReconciliationProperties properties = new EmailReconciliationProperties();
+        EmailReconciliationService service = new EmailReconciliationService(mock(GmailImapClient.class),
+                mock(RepaymentEmailParser.class), mock(PaymentNotificationRepository.class),
+                mock(BankCreditRepository.class), mock(ReconciliationRecordRepository.class),
+                mock(LumpsumRepaymentRepository.class), mock(UserRepository.class),
+                mock(EmailReconciliationAccountRepository.class), mock(EmailCredentialCipher.class), properties);
+        EmailReconciliationAccount account = new EmailReconciliationAccount();
+        account.setBankAccountLast4("3003");
+
+        assertThat(service.belongsToAccount(account, parsedForAccount("3003"))).isTrue();
+        assertThat(service.belongsToAccount(account, parsedForAccount("6643"))).isFalse();
+        assertThat(service.belongsToAccount(account, parsedForAccount(null))).isFalse();
+        assertThat(service.belongsToAccount(null, parsedForAccount(null))).isTrue();
     }
 
     @Test
@@ -110,5 +128,11 @@ class EmailReconciliationServiceTest {
         assertThat(saved.getUserId()).isEqualTo(12L);
         assertThat(saved.getReconciliationAccountId()).isEqualTo(8L);
         assertThat(saved.getTotalAmount()).isEqualByComparingTo("254.36");
+    }
+
+    private RepaymentEmailParser.ParsedEmail parsedForAccount(String accountLast4) {
+        return new RepaymentEmailParser.ParsedEmail("BANK_CREDIT", LocalDate.of(2026, 9, 19),
+                new BigDecimal("100.00"), null, null, null, accountLast4, null,
+                "VALID", null, null, null, null, null);
     }
 }
