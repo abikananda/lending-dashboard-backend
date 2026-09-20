@@ -1,16 +1,39 @@
 package com.techconsulting.lending.service;
 
 import com.techconsulting.lending.dto.DashboardSummary;
+import jakarta.mail.Multipart;
+import jakarta.mail.Session;
+import jakarta.mail.internet.MimeMessage;
 import org.junit.jupiter.api.Test;
 import org.springframework.mail.javamail.JavaMailSender;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class ManualUploadEmailServiceTest {
+    @Test
+    void sendsPlainTextAndHtmlAsMultipartEmail() throws Exception {
+        JavaMailSender mailSender=mock(JavaMailSender.class);
+        MimeMessage message=new MimeMessage(Session.getInstance(new Properties()));
+        when(mailSender.createMimeMessage()).thenReturn(message);
+        ManualUploadEmailService service=new ManualUploadEmailService(mailSender,true,"sender@example.com");
+        DashboardSummary summary=summary("1000","100","0",0);
+
+        service.send(new ManualUploadNotification(14L,"report.xlsx","recipient@example.com",
+                summary,summary,List.of()));
+
+        verify(mailSender).send(message);
+        message.saveChanges();
+        assertThat(message.getContentType()).startsWith("multipart/mixed");
+        assertThat(message.getContent()).isInstanceOf(Multipart.class);
+    }
+
     @Test
     void includesBeforeAfterDashboardStatsAndOnlyNewNpaDetails() {
         ManualUploadEmailService service=new ManualUploadEmailService(mock(JavaMailSender.class),false,"");
