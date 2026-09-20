@@ -129,6 +129,24 @@ class RepaymentEmailParserTest {
     }
 
     @Test
+    void parsesLumpSumWhenForwardedHtmlIntroducesWhitespace() {
+        String body = """
+                ending with XXXXXXXXXXXX3003 within 5 working days
+                Sept. 19, 2026 LUMP SUM ₹240.71 ₹13.65 ₹254.36
+                Sept. 19, 2026 MANUAL LENDING ₹4767.98 ₹392.60 ₹5160.58
+                Total ₹5008.69 ₹406.25 ₹5414.94
+                """;
+
+        var result = parser.parse(new EmailMessageData("m-forwarded", "noreply@lendenclub.com",
+                "Repayment of ₹5414.94 has been processed to your bank account XXXXXXXXXXXX3003",
+                Instant.now(), body)).orElseThrow();
+
+        assertThat(result.lumpsumPrincipal()).isEqualByComparingTo("240.71");
+        assertThat(result.lumpsumInterest()).isEqualByComparingTo("13.65");
+        assertThat(result.lumpsumTotal()).isEqualByComparingTo("254.36");
+    }
+
+    @Test
     void flagsCombinedBodyTotalThatDoesNotMatchSubject() {
         String body = """
                 ending with XXXXXXXXXXXX6643 within 5 working days
