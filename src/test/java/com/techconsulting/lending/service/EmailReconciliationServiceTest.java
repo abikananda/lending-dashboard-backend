@@ -6,18 +6,13 @@ import com.techconsulting.lending.domain.LumpsumRepayment;
 import com.techconsulting.lending.domain.PaymentNotification;
 import com.techconsulting.lending.repository.*;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
-import java.time.Instant;
-import java.time.LocalDate;
 import java.math.BigDecimal;
-import java.util.List;
+import java.time.LocalDate;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class EmailReconciliationServiceTest {
@@ -45,35 +40,30 @@ class EmailReconciliationServiceTest {
     }
 
     @Test
-    void backfillsLumpsumFromStoredPaymentNotificationWithoutRefetchingEmail() {
+    void persistsLumpsumOnlyFromParsedLendenclubEmail() {
         EmailReconciliationProperties properties = new EmailReconciliationProperties();
-        properties.setLendenclubSender("noreply@lendenclub.com");
-        properties.setBankSenders(List.of("noreply@jana.bank.in", "noreply@slice.bank.in"));
         LumpsumRepaymentRepository lumpsums = mock(LumpsumRepaymentRepository.class);
         when(lumpsums.findByPaymentNotificationId(21L)).thenReturn(Optional.empty());
-        when(lumpsums.save(any(LumpsumRepayment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(lumpsums.saveAndFlush(any(LumpsumRepayment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
 
         EmailReconciliationService service = new EmailReconciliationService(mock(GmailImapClient.class),
-                new RepaymentEmailParser(properties), mock(PaymentNotificationRepository.class),
+                mock(RepaymentEmailParser.class), mock(PaymentNotificationRepository.class),
                 mock(BankCreditRepository.class), mock(ReconciliationRecordRepository.class), lumpsums,
                 mock(UserRepository.class), mock(EmailReconciliationAccountRepository.class),
                 mock(EmailCredentialCipher.class), properties);
+        EmailReconciliationAccount account = new EmailReconciliationAccount();
+        account.setId(3L);
         PaymentNotification notification = new PaymentNotification();
         notification.setId(21L);
-        notification.setUserId(9L);
-        notification.setReconciliationAccountId(3L);
-        notification.setEmailMessageId("stored-lendenclub-email");
-        notification.setEmailReceivedAt(Instant.parse("2026-09-19T09:30:00Z"));
-        notification.setSender("noreply@lendenclub.com");
-        notification.setSubject("Repayment of ₹5414.94 has been processed to your bank account XXXXXXXXXXXX6643");
-        notification.setRawEmailText("""
-                ending with XXXXXXXXXXXX6643 within 5 working days
-                Sept. 19, 2026 LUMPSUM ₹240.71 ₹13.65 ₹254.36
-                Sept. 19, 2026 MANUAL LENDING ₹4767.98 ₹392.60 ₹5160.58
-                Total ₹5008.69 ₹406.25 ₹5414.94
-                """);
+        RepaymentEmailParser.ParsedEmail parsed = new RepaymentEmailParser.ParsedEmail(
+                "LENDENCLUB_REPAYMENT", LocalDate.of(2026, 9, 19), new BigDecimal("5160.58"),
+                new BigDecimal("4767.98"), new BigDecimal("392.60"), "MANUAL_LENDING", "6643",
+                null, "VALID", null, new BigDecimal("5414.94"), new BigDecimal("240.71"),
+                new BigDecimal("13.65"), new BigDecimal("254.36"));
 
-        LumpsumRepayment result = service.findOrBackfillLumpsum(notification).orElseThrow();
+        LumpsumRepayment result = service.persistLumpsumFromLendenclubParse(
+                9L, account, notification, parsed).orElseThrow();
 
         assertThat(result.getUserId()).isEqualTo(9L);
         assertThat(result.getReconciliationAccountId()).isEqualTo(3L);
@@ -85,49 +75,19 @@ class EmailReconciliationServiceTest {
     }
 
     @Test
-    void relinksStoredSecondUserNotificationAndBackfillsItsLumpsum() {
+    void doesNotCreateLumpsumForBankEmail() {
         EmailReconciliationProperties properties = new EmailReconciliationProperties();
-        properties.setLendenclubSender("noreply@lendenclub.com");
-        properties.setBankSenders(List.of("noreply@slice.bank.in"));
-        PaymentNotificationRepository notifications = mock(PaymentNotificationRepository.class);
         LumpsumRepaymentRepository lumpsums = mock(LumpsumRepaymentRepository.class);
-        when(lumpsums.findByPaymentNotificationId(31L)).thenReturn(Optional.empty());
-        when(lumpsums.save(any(LumpsumRepayment.class))).thenAnswer(invocation -> invocation.getArgument(0));
         EmailReconciliationService service = new EmailReconciliationService(mock(GmailImapClient.class),
-                new RepaymentEmailParser(properties), notifications, mock(BankCreditRepository.class),
+                mock(RepaymentEmailParser.class), mock(PaymentNotificationRepository.class),
+                mock(BankCreditRepository.class),
                 mock(ReconciliationRecordRepository.class), lumpsums, mock(UserRepository.class),
                 mock(EmailReconciliationAccountRepository.class), mock(EmailCredentialCipher.class), properties);
-        EmailReconciliationAccount account = new EmailReconciliationAccount();
-        account.setId(8L);
-        account.setUserId(12L);
-        account.setBankAccountLast4("3003");
         PaymentNotification notification = new PaymentNotification();
         notification.setId(31L);
-        notification.setUserId(12L);
-        notification.setAccountLast4("3003");
-        notification.setEmailMessageId("second-user-lendenclub-email");
-        notification.setEmailReceivedAt(Instant.parse("2026-09-19T09:30:00Z"));
-        notification.setSender("noreply@lendenclub.com");
-        notification.setSubject("Repayment of ₹5414.94 has been processed to your bank account XXXXXXXXXXXX3003");
-        notification.setRawEmailText("""
-                ending with XXXXXXXXXXXX3003 within 5 working days
-                Sept. 19, 2026 LUMPSUM ₹240.71 ₹13.65 ₹254.36
-                Sept. 19, 2026 MANUAL LENDING ₹4767.98 ₹392.60 ₹5160.58
-                Total ₹5008.69 ₹406.25 ₹5414.94
-                """);
-        when(notifications.findStoredLendenclubEmailsMissingLumpsumRepayment(12L))
-                .thenReturn(List.of(notification));
+        RepaymentEmailParser.ParsedEmail parsed = parsedForAccount("3003");
 
-        service.backfillStoredLumpsums(12L, account);
-
-        assertThat(notification.getReconciliationAccountId()).isEqualTo(8L);
-        verify(notifications).save(notification);
-        ArgumentCaptor<LumpsumRepayment> savedValue = ArgumentCaptor.forClass(LumpsumRepayment.class);
-        verify(lumpsums).save(savedValue.capture());
-        LumpsumRepayment saved = savedValue.getValue();
-        assertThat(saved.getUserId()).isEqualTo(12L);
-        assertThat(saved.getReconciliationAccountId()).isEqualTo(8L);
-        assertThat(saved.getTotalAmount()).isEqualByComparingTo("254.36");
+        assertThat(service.persistLumpsumFromLendenclubParse(12L, null, notification, parsed)).isEmpty();
     }
 
     private RepaymentEmailParser.ParsedEmail parsedForAccount(String accountLast4) {
