@@ -98,7 +98,8 @@ public class EmailReconciliationService {
                 if (existing.filter(value -> "PARSED".equals(value.getParsingStatus())).isPresent()) {
                     PaymentNotification duplicate = existing.orElseThrow();
                     relinkNotificationToAccount(duplicate, account);
-                    persistLumpsumFromLendenclubParse(userId, account, duplicate, parsed.get());
+                    if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId,
+                            account == null ? null : account.getId(), duplicate, parsed.get());
                     if ("BANK_CREDIT".equals(parsed.get().type()))
                         saveBankCredit(userId, duplicate, parsed.get());
                     duplicates++;
@@ -108,20 +109,30 @@ public class EmailReconciliationService {
                 target.setReconciliationAccountId(account == null ? null : account.getId());
                 PaymentNotification notification = saveNotification(userId, email, parsed.get(),
                         target);
-                persistLumpsumFromLendenclubParse(userId, account, notification, parsed.get());
+                if (parsed.get().lumpsumTotal() != null) saveLumpsum(userId,
+                        account == null ? null : account.getId(), notification, parsed.get());
                 if ("BANK_CREDIT".equals(parsed.get().type())) saveBankCredit(userId, notification, parsed.get());
                 imported++;
             } catch (RuntimeException ex) {
-                log.error("Failed to persist parsed reconciliation email messageId={} userId={} accountId={}",
-                        email.messageId(), userId, account == null ? null : account.getId(), ex);
                 PaymentNotification failed = existing.orElseGet(PaymentNotification::new);
                 failed.setReconciliationAccountId(account == null ? null : account.getId());
                 saveParseFailure(userId, email, ex, failed);
                 parseFailures++;
             }
         }
+        backfillStoredLumpsums(userId, account);
         int reconciled = reconcile(userId, account);
         return new SyncResult(imported, duplicates, parseFailures, reconciled);
+    }
+
+    void backfillStoredLumpsums(Long userId, EmailReconciliationAccount account) {
+        for (PaymentNotification notification :
+                notifications.findStoredLendenclubEmailsMissingLumpsumRepayment(userId)) {
+            if (account != null && !Objects.equals(account.getBankAccountLast4(), notification.getAccountLast4()))
+                continue;
+            relinkNotificationToAccount(notification, account);
+            findOrBackfillLumpsum(notification);
+        }
     }
 
     boolean belongsToAccount(EmailReconciliationAccount account,
@@ -183,28 +194,45 @@ public class EmailReconciliationService {
         });
     }
 
-    Optional<LumpsumRepayment> persistLumpsumFromLendenclubParse(
-            Long userId, EmailReconciliationAccount account, PaymentNotification notification,
-            RepaymentEmailParser.ParsedEmail parsed) {
-        if (!"LENDENCLUB_REPAYMENT".equals(parsed.type()) || parsed.lumpsumTotal() == null)
-            return Optional.empty();
-        if (notification.getId() == null)
-            throw new IllegalStateException("Payment notification must be persisted before lump-sum repayment");
-        if (parsed.lumpsumPrincipal() == null || parsed.lumpsumInterest() == null)
-            throw new IllegalArgumentException("Incomplete LenDenClub lump-sum breakdown");
+    private LumpsumRepayment saveLumpsum(Long userId, Long reconciliationAccountId,
+                                         PaymentNotification notification,
+                                         RepaymentEmailParser.ParsedEmail parsed) {
         LumpsumRepayment value = lumpsumRepayments.findByPaymentNotificationId(notification.getId())
                 .orElseGet(LumpsumRepayment::new);
         value.setUserId(userId);
-        value.setReconciliationAccountId(account == null ? null : account.getId());
+        value.setReconciliationAccountId(reconciliationAccountId);
         value.setPaymentNotificationId(notification.getId());
         value.setProcessingDate(parsed.date());
         value.setPrincipalAmount(parsed.lumpsumPrincipal());
         value.setInterestAmount(parsed.lumpsumInterest());
         value.setTotalAmount(parsed.lumpsumTotal());
-        value = lumpsumRepayments.saveAndFlush(value);
-        log.info("Stored LenDenClub lump-sum repayment notificationId={} principal={} interest={} total={}",
-                notification.getId(), value.getPrincipalAmount(), value.getInterestAmount(), value.getTotalAmount());
-        return Optional.of(value);
+        return lumpsumRepayments.save(value);
+    }
+
+    Optional<LumpsumRepayment> findOrBackfillLumpsum(PaymentNotification notification) {
+        Optional<LumpsumRepayment> existing = lumpsumRepayments.findByPaymentNotificationId(notification.getId());
+        if (existing.isPresent()) {
+            LumpsumRepayment value = existing.orElseThrow();
+            if (!Objects.equals(value.getReconciliationAccountId(), notification.getReconciliationAccountId())) {
+                value.setReconciliationAccountId(notification.getReconciliationAccountId());
+                value = lumpsumRepayments.save(value);
+            }
+            return Optional.of(value);
+        }
+        if (notification.getRawEmailText() == null) return Optional.empty();
+        try {
+            EmailMessageData storedEmail = new EmailMessageData(notification.getEmailMessageId(),
+                    notification.getSender(), notification.getSubject(), notification.getEmailReceivedAt(),
+                    notification.getRawEmailText());
+            return parser.parse(storedEmail)
+                    .filter(value -> value.lumpsumTotal() != null)
+                    .map(value -> saveLumpsum(notification.getUserId(),
+                            notification.getReconciliationAccountId(), notification, value));
+        } catch (RuntimeException ex) {
+            log.warn("Could not backfill lump-sum repayment from payment notification id={}",
+                    notification.getId(), ex);
+            return Optional.empty();
+        }
     }
 
     void relinkNotificationToAccount(PaymentNotification notification, EmailReconciliationAccount account) {
@@ -244,7 +272,7 @@ public class EmailReconciliationService {
             if (record.isManuallyResolved()) continue;
             record.setUserId(userId); record.setPaymentNotificationId(repayment.getId());
             record.setReconciliationDate(repayment.getNotificationDate());
-            Optional<LumpsumRepayment> lumpsum = lumpsumRepayments.findByPaymentNotificationId(repayment.getId());
+            Optional<LumpsumRepayment> lumpsum = findOrBackfillLumpsum(repayment);
             BigDecimal expectedBankCredit = repayment.getReportedAmount().add(
                     lumpsum.map(LumpsumRepayment::getTotalAmount).orElse(BigDecimal.ZERO));
             record.setLenderReportedAmount(expectedBankCredit);
