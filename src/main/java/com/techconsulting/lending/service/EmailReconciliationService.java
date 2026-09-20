@@ -120,7 +120,8 @@ public class EmailReconciliationService {
     }
 
     void backfillStoredLumpsums(Long userId, EmailReconciliationAccount account) {
-        for (PaymentNotification notification : notifications.findStoredLumpsumEmailsMissingRepayment(userId)) {
+        for (PaymentNotification notification :
+                notifications.findStoredLendenclubEmailsMissingLumpsumRepayment(userId)) {
             if (account != null && !Objects.equals(account.getBankAccountLast4(), notification.getAccountLast4()))
                 continue;
             relinkNotificationToAccount(notification, account);
