@@ -114,8 +114,18 @@ public class EmailReconciliationService {
                 parseFailures++;
             }
         }
+        backfillStoredLumpsums(userId, account);
         int reconciled = reconcile(userId, account);
         return new SyncResult(imported, duplicates, parseFailures, reconciled);
+    }
+
+    void backfillStoredLumpsums(Long userId, EmailReconciliationAccount account) {
+        for (PaymentNotification notification : notifications.findStoredLumpsumEmailsMissingRepayment(userId)) {
+            if (account != null && !Objects.equals(account.getBankAccountLast4(), notification.getAccountLast4()))
+                continue;
+            relinkNotificationToAccount(notification, account);
+            findOrBackfillLumpsum(notification);
+        }
     }
 
     private void validateAccount(EmailReconciliationAccount account,
@@ -224,7 +234,6 @@ public class EmailReconciliationService {
                 || Objects.equals(notification.getReconciliationAccountId(), account.getId())) return;
         notification.setReconciliationAccountId(account.getId());
         notifications.save(notification);
-        findOrBackfillLumpsum(notification);
     }
 
     private int reconcile(Long userId, EmailReconciliationAccount account) {
