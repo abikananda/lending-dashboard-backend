@@ -18,13 +18,11 @@ public interface PaymentNotificationRepository extends JpaRepository<PaymentNoti
             select notification from PaymentNotification notification
             where notification.userId = :userId
               and notification.notificationType = 'LENDENCLUB_REPAYMENT'
-              and notification.parsingStatus = 'PARSED'
-              and lower(notification.rawEmailText) like '%lumpsum%'
               and not exists (
                   select repayment.id from LumpsumRepayment repayment
                   where repayment.paymentNotificationId = notification.id
               )
             order by notification.notificationDate desc
             """)
-    List<PaymentNotification> findStoredLumpsumEmailsMissingRepayment(@Param("userId") Long userId);
+    List<PaymentNotification> findStoredLendenclubEmailsMissingLumpsumRepayment(@Param("userId") Long userId);
 }

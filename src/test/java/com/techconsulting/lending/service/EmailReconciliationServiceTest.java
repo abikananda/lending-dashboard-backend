@@ -97,7 +97,8 @@ class EmailReconciliationServiceTest {
                 Sept. 19, 2026 MANUAL LENDING ₹4767.98 ₹392.60 ₹5160.58
                 Total ₹5008.69 ₹406.25 ₹5414.94
                 """);
-        when(notifications.findStoredLumpsumEmailsMissingRepayment(12L)).thenReturn(List.of(notification));
+        when(notifications.findStoredLendenclubEmailsMissingLumpsumRepayment(12L))
+                .thenReturn(List.of(notification));
 
         service.backfillStoredLumpsums(12L, account);
 
