@@ -38,7 +38,7 @@ public class ManualUploadEmailService {
         }
         try {
             MimeMessage message=mailSender.createMimeMessage();
-            MimeMessageHelper helper=new MimeMessageHelper(message,false, StandardCharsets.UTF_8.name());
+            MimeMessageHelper helper=new MimeMessageHelper(message,true, StandardCharsets.UTF_8.name());
             if(from!=null&&!from.isBlank()) helper.setFrom(from);
             helper.setTo(event.recipient());
             helper.setSubject("LenDenClub report uploaded: " + event.filename());
