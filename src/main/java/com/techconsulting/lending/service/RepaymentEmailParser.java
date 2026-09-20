@@ -19,7 +19,7 @@ public class RepaymentEmailParser {
     private static final Pattern MANUAL_AMOUNTS = Pattern.compile(
             "(?is)MANUAL\\s+LENDING\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT);
     private static final Pattern LUMPSUM_AMOUNTS = Pattern.compile(
-            "(?is)LUMPSUM\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT);
+            "(?is)LUMP\\s*SUM\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT);
     private static final Pattern SUMMARY_AMOUNTS = Pattern.compile(
             "(?is)Total\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT + "\\s+₹\\s*" + AMOUNT);
     private static final Pattern SUBJECT_AMOUNT = Pattern.compile("(?i)Repayment\\s+of\\s+₹\\s*" + AMOUNT);
