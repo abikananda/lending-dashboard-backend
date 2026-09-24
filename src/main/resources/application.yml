@@ -26,6 +26,8 @@ app:
   npa-on-dpd-over-seven: false
   # Optional, for example http://localhost:8081/api/borrowers/{loanId}
   borrower-lookup-url: ${BORROWER_LOOKUP_URL:}
+  borrower-lookup-api-key: ${RISK_ENGINE_API_KEY:${BACKEND_API_KEY:}}
+  borrower-lookup-auth-header: ${RISK_ENGINE_AUTH_HEADER:${BACKEND_AUTH_HEADER:X-API-Key}}
   upload-notification:
     enabled: ${UPLOAD_NOTIFICATION_ENABLED:false}
     from: ${UPLOAD_NOTIFICATION_FROM:${MAIL_USERNAME:}}
